@@ -2,6 +2,7 @@
 <p align="center"><b>Adversarial test harness for LLM applications.</b></p>
 
 <p align="center">
+  <a href="https://github.com/MRX-72/llm-red-team-cli/actions/workflows/ci.yml"><img src="https://github.com/MRX-72/llm-red-team-cli/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/OWASP-LLM%20Top%2010-black.svg" alt="OWASP">
