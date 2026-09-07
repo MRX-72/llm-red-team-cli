@@ -106,6 +106,8 @@ class Result:
     error: str = ""
     replies: list[str] = field(default_factory=list)
     turn: int = 0          # 1-based turn that produced the finding, 0 if none
+    runs: int = 1          # how many times the vector was attempted
+    hits: int = 1          # how many of those leaked
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -114,13 +116,22 @@ class Result:
 
 
 def load_vectors(
-    path: str = VECTOR_DIR,
+    path: str | Iterable[str] = VECTOR_DIR,
     categories: Iterable[str] | None = None,
     severities: Iterable[str] | None = None,
 ) -> list[Vector]:
+    """Load vectors from the built-in suite, or from directories you name.
+
+    Teams keep payloads they cannot publish. Pointing at your own directory
+    means you never have to fork this repo to run private vectors alongside it.
+    """
+    paths = [path] if isinstance(path, (str, os.PathLike)) else list(path)
+    files = [f for d in paths for f in sorted(glob.glob(os.path.join(d, "*.yaml")))]
+    if not files:
+        raise ValueError(f"no .yaml vector files found in {paths}")
     vectors: list[Vector] = []
     seen: set[str] = set()
-    for file in sorted(glob.glob(os.path.join(path, "*.yaml"))):
+    for file in files:
         for raw in yaml.safe_load(open(file)) or []:
             v = Vector(**raw)
             if v.id in seen:
@@ -295,6 +306,7 @@ def run_scan(
     workers: int = 4,
     rpm: int = 0,
     retries: int = 2,
+    repeat: int = 1,
     on_result=None,
     **kw,
 ) -> tuple[list[Result], str]:
@@ -302,7 +314,7 @@ def run_scan(
     system = (system or SYSTEM_PROMPT).format(canary=canary)
     throttle = Throttle(rpm)
 
-    def one(v: Vector) -> Result:
+    def attempt(v: Vector) -> Result:
         try:
             replies = converse(model, system, v.messages, throttle=throttle,
                                num_retries=retries, **kw)
@@ -315,6 +327,21 @@ def run_scan(
             if evidence:
                 return Result(v, True, reply, evidence, replies=replies, turn=i)
         return Result(v, False, replies[-1] if replies else "", replies=replies)
+
+    def one(v: Vector) -> Result:
+        """Run the vector `repeat` times and fold the attempts into one result.
+
+        Guardrails are probabilistic: a framing that is refused once may land on
+        the next try. A single pass is an observation, not a rate. Any leak makes
+        the vector a finding, and `hits/runs` records how reliably it reproduces.
+        """
+        attempts = [attempt(v) for _ in range(repeat)]
+        leaked = [r for r in attempts if r.vulnerable]
+        ran = [r for r in attempts if not r.error]
+        result = leaked[0] if leaked else (ran[-1] if ran else attempts[0])
+        result.runs = repeat
+        result.hits = len(leaked)
+        return result
 
     # as_completed, not map: map yields in submission order, so one slow vector
     # withholds every result behind it and a live view stalls. Results are sorted
@@ -364,7 +391,7 @@ def summarise(results: list[Result], model: str, canary: str) -> dict:
         "scanned_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "canary": canary,
         "total": len(results),
-        "requests": sum(len(r.vector.messages) for r in results),
+        "requests": sum(len(r.vector.messages) * r.runs for r in results),
         "vulnerable": sum(r.vulnerable for r in results),
         "errors": errors,
         "blank": blank,

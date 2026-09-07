@@ -34,6 +34,10 @@ def scan(
     category: Optional[list[str]] = typer.Option(None, "--category", "-c", help="Limit to categories (repeatable)."),
     severity: Optional[list[str]] = typer.Option(None, "--severity", "-s", help="Limit to severities (repeatable)."),
     system: Optional[pathlib.Path] = typer.Option(None, "--system", help="File holding your own system prompt. Must contain {canary}."),
+    vectors_dir: Optional[list[pathlib.Path]] = typer.Option(
+        None, "--vectors", help="Load vectors from these directories instead of the built-in suite (repeatable)."),
+    repeat: int = typer.Option(
+        1, "--repeat", "-n", help="Run each vector N times. Guardrails are probabilistic; findings report hits/runs."),
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel requests."),
     rpm: int = typer.Option(0, "--rpm", help="Cap requests per minute. Set this on free tiers (try 10)."),
     temperature: float = typer.Option(0.0, "--temperature", help="Lower is more reproducible."),
@@ -43,7 +47,8 @@ def scan(
     tui: bool = typer.Option(False, "--tui", help="Live view: watch each vector land as it completes."),
 ):
     """Run the adversarial suite against a model and report what got through."""
-    vectors = engine.load_vectors(categories=category, severities=severity)
+    source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
+    vectors = engine.load_vectors(source, categories=category, severities=severity)
     if not vectors:
         console.print("[red]No vectors matched those filters.[/]")
         raise typer.Exit(2)
@@ -55,13 +60,15 @@ def scan(
             console.print("[red]--system file must contain the literal {canary} placeholder.[/]")
             raise typer.Exit(2)
 
-    requests = sum(len(v.messages) for v in vectors)
+    requests = sum(len(v.messages) for v in vectors) * repeat
     extra = f" · {requests} requests" if requests != len(vectors) else ""
+    extra += f" · {repeat}x each" if repeat > 1 else ""
     console.print(Panel(f"[bold]{model}[/]\n{len(vectors)} vectors · "
                         f"{len({v.category for v in vectors})} categories{extra}",
                         title="LLM Red Team", border_style="blue"))
 
-    kw = dict(system=custom, workers=workers, rpm=rpm, temperature=temperature)
+    kw = dict(system=custom, workers=workers, rpm=rpm, repeat=repeat,
+              temperature=temperature)
     if tui:
         view = LiveScan(model, len(vectors))
         with Live(view, console=console, refresh_per_second=8, transient=True):
@@ -93,12 +100,15 @@ def scan(
 @app.command()
 def vectors(
     category: Optional[list[str]] = typer.Option(None, "--category", "-c"),
+    vectors_dir: Optional[list[pathlib.Path]] = typer.Option(
+        None, "--vectors", help="List vectors from these directories instead of the built-in suite."),
 ):
     """List the attack vectors in the suite without calling any model."""
     table = Table(box=None, pad_edge=False)
     for col in ("ID", "SEVERITY", "CATEGORY", "TURNS", "TITLE"):
         table.add_column(col)
-    vs = engine.load_vectors(categories=category)
+    source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
+    vs = engine.load_vectors(source, categories=category)
     for v in vs:
         n = len(v.messages)
         table.add_row(v.id, f"[{SEV_COLOR.get(v.severity,'white')}]{v.severity}[/]",
@@ -170,6 +180,90 @@ class LiveScan:
             Panel(table, border_style="grey37", padding=(0, 1)),
             Panel(tally, border_style="grey37", padding=(0, 1)),
         )
+
+
+@app.command()
+def compare(
+    models: list[str] = typer.Argument(..., help="Two or more models to scan with the same suite."),
+    category: Optional[list[str]] = typer.Option(None, "--category", "-c"),
+    severity: Optional[list[str]] = typer.Option(None, "--severity", "-s"),
+    system: Optional[pathlib.Path] = typer.Option(None, "--system", help="Your own system prompt. Must contain {canary}."),
+    vectors_dir: Optional[list[pathlib.Path]] = typer.Option(None, "--vectors"),
+    repeat: int = typer.Option(1, "--repeat", "-n"),
+    workers: int = typer.Option(4, "--workers", "-w"),
+    rpm: int = typer.Option(0, "--rpm"),
+    temperature: float = typer.Option(0.0, "--temperature"),
+    json_out: Optional[pathlib.Path] = typer.Option(None, "--json", help="Write every model's report here as one object."),
+):
+    """Scan several models with the same suite and put the results side by side.
+
+    One model's score tells you little. The comparison is the useful artefact:
+    the same vector that a model refuses today is one another model answers, and
+    seeing that next to each other is what makes the difference legible.
+    """
+    if len(models) < 2:
+        console.print("[red]compare needs at least two models.[/]")
+        raise typer.Exit(2)
+
+    source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
+    vectors = engine.load_vectors(source, categories=category, severities=severity)
+    custom = system.read_text() if system else None
+    if custom and "{canary}" not in custom:
+        console.print("[red]--system file must contain the literal {canary} placeholder.[/]")
+        raise typer.Exit(2)
+
+    reports: dict[str, dict] = {}
+    for model in models:
+        console.print(f"[blue]scanning[/] [bold]{model}[/] …")
+        results, canary = engine.run_scan(
+            model, vectors, system=custom, workers=workers, rpm=rpm,
+            repeat=repeat, temperature=temperature)
+        reports[model] = engine.summarise(results, model, canary)
+
+    # Only vectors that got through somewhere are worth a row.
+    interesting = [v for v in vectors
+                   if any(f["vulnerable"] for r in reports.values()
+                          for f in r["findings"] if f["vector"]["id"] == v.id)]
+
+    table = Table(box=None, pad_edge=False)
+    table.add_column("ID")
+    table.add_column("SEVERITY")
+    table.add_column("TITLE", overflow="fold")
+    for m in models:
+        table.add_column(m.split("/")[-1][:18], justify="center")
+
+    for v in interesting:
+        row = [v.id, f"[{SEV_COLOR.get(v.severity,'white')}]{v.severity}[/]", v.title]
+        for m in models:
+            f = next(x for x in reports[m]["findings"] if x["vector"]["id"] == v.id)
+            if f["error"]:
+                row.append("[dim]![/]")
+            elif f["vulnerable"]:
+                rate = f"[red]✗[/]" if f.get("runs", 1) == 1 else f"[red]✗ {f['hits']}/{f['runs']}[/]"
+                row.append(rate)
+            else:
+                row.append("[green]✓[/]")
+        table.add_row(*row)
+
+    console.print()
+    if interesting:
+        console.print(table)
+    else:
+        console.print("[green]No vector got through on any model.[/]")
+
+    summary = Table(box=None, pad_edge=False)
+    for col in ("MODEL", "RISK", "BYPASSED", "ERRORS"):
+        summary.add_column(col)
+    for m in models:
+        r = reports[m]
+        summary.add_row(m, f"[{RISK_COLOR.get(r['risk'],'white')}]{r['risk']}[/]",
+                        f"{r['vulnerable']}/{r['total']}", str(r["errors"]))
+    console.print()
+    console.print(summary)
+
+    if json_out:
+        json_out.write_text(json.dumps(reports, indent=2))
+        console.print(f"\n[dim]reports → {json_out}[/]")
 
 
 @app.command()
@@ -250,14 +344,25 @@ def _render(report: dict, show_responses: bool) -> None:
 
     if findings:
         table = Table(title="Findings", title_justify="left", box=None, pad_edge=False)
-        for col in ("ID", "SEVERITY", "CATEGORY", "TITLE", "TURN", "EVIDENCE"):
+        repeated = any(f.get("runs", 1) > 1 for f in report["findings"])
+        cols = ["ID", "SEVERITY", "CATEGORY", "TITLE", "TURN"]
+        if repeated:
+            cols.append("RATE")
+        cols.append("EVIDENCE")
+        for col in cols:
             table.add_column(col, overflow="fold")
         for f in findings:
             v = f["vector"]
             turns = len(v.get("turns") or []) or 1
             where = f"{f['turn']}/{turns}" if turns > 1 else "—"
-            table.add_row(v["id"], f"[{SEV_COLOR.get(v['severity'],'white')}]{v['severity'].upper()}[/]",
-                          v["category"], v["title"], where, f["evidence"][:60])
+            row = [v["id"], f"[{SEV_COLOR.get(v['severity'],'white')}]{v['severity'].upper()}[/]",
+                   v["category"], v["title"], where]
+            if repeated:
+                hits, runs = f.get("hits", 1), f.get("runs", 1)
+                colour = "red" if hits == runs else "yellow"
+                row.append(f"[{colour}]{hits}/{runs}[/]")
+            row.append(f["evidence"][:60])
+            table.add_row(*row)
         console.print()
         console.print(table)
 
