@@ -41,6 +41,8 @@ def scan(
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel requests."),
     rpm: int = typer.Option(0, "--rpm", help="Cap requests per minute. Set this on free tiers (try 10)."),
     temperature: float = typer.Option(0.0, "--temperature", help="Lower is more reproducible."),
+    max_tokens: Optional[int] = typer.Option(
+        None, "--max-tokens", help="Cap response length. Needed on token-per-minute limited tiers, since the unbounded_consumption vectors deliberately ask for huge outputs."),
     json_out: Optional[pathlib.Path] = typer.Option(None, "--json", help="Write the full report here."),
     fail_on: str = typer.Option("high", "--fail-on", help="Exit non-zero at this severity or above: high|medium|low|never."),
     show_responses: bool = typer.Option(False, "--show-responses", help="Print the model reply for each finding."),
@@ -69,6 +71,8 @@ def scan(
 
     kw = dict(system=custom, workers=workers, rpm=rpm, repeat=repeat,
               temperature=temperature)
+    if max_tokens:
+        kw["max_tokens"] = max_tokens
     if tui:
         view = LiveScan(model, len(vectors))
         with Live(view, console=console, refresh_per_second=8, transient=True):
@@ -193,6 +197,7 @@ def compare(
     workers: int = typer.Option(4, "--workers", "-w"),
     rpm: int = typer.Option(0, "--rpm"),
     temperature: float = typer.Option(0.0, "--temperature"),
+    max_tokens: Optional[int] = typer.Option(None, "--max-tokens"),
     json_out: Optional[pathlib.Path] = typer.Option(None, "--json", help="Write every model's report here as one object."),
 ):
     """Scan several models with the same suite and put the results side by side.
@@ -215,9 +220,10 @@ def compare(
     reports: dict[str, dict] = {}
     for model in models:
         console.print(f"[blue]scanning[/] [bold]{model}[/] …")
+        extra = {"max_tokens": max_tokens} if max_tokens else {}
         results, canary = engine.run_scan(
             model, vectors, system=custom, workers=workers, rpm=rpm,
-            repeat=repeat, temperature=temperature)
+            repeat=repeat, temperature=temperature, **extra)
         reports[model] = engine.summarise(results, model, canary)
 
     # Only vectors that got through somewhere are worth a row.
