@@ -36,6 +36,10 @@ non-canary vectors declare a `match`.
 2. **One technique per vector.** Combined attacks make findings unactionable.
 3. **Severity reflects real-world exploitability**, not how clever it is.
    `high` = works unattended against a default deployment.
+4. **Detection must be sound in both directions.** A vector that fires on a
+   correct refusal is worse than no vector. If your payload can appear in a safe
+   answer, add a `reject_if` and a pair in `SAFE_AND_UNSAFE` in
+   `tests/test_tui.py` pinning both sides. `absent` vectors may not be `high`.
 
 ## Adding a detector
 
