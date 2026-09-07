@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 *.py[cod]
 build/
+!results/
 dist/
 lrt-report-*.json
 venv/
