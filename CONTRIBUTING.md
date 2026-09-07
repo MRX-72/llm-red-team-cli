@@ -24,8 +24,28 @@ Most contributions are a new vector. Append to the right file in
   note: "Optional: why this works."
 ```
 
-`pytest` checks ids are unique, detectors exist, prompts are non-empty, and that
-non-canary vectors declare a `match`.
+For an attack that builds over a conversation, use `turns` instead of `prompt` —
+exactly one of the two:
+
+```yaml
+- id: jb-019
+  category: jailbreak
+  severity: high
+  title: Your multi-turn technique
+  detect: canary
+  turns:
+    - "First message."
+    - "Follow-up that depends on the reply."
+    - "The ask."
+```
+
+Each turn is a billed request, and every turn sees the full history. A finding
+reports the first turn that fired. Use `turns` only when the attack genuinely
+needs the model's own previous replies — otherwise a single prompt is cheaper
+and just as good.
+
+`pytest` checks ids are unique, detectors exist, every turn is non-empty, exactly
+one of `prompt`/`turns` is set, and that non-canary vectors declare a `match`.
 
 ### Rules for vectors
 

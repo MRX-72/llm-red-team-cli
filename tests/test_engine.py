@@ -56,7 +56,10 @@ def test_shipped_vectors_are_valid():
     assert {x.severity for x in vs} <= {"high", "medium", "low"}
     for x in vs:
         assert x.detect in engine.DETECTORS
-        assert x.prompt.strip(), f"{x.id} has an empty prompt"
+        assert x.messages and all(t.strip() for t in x.messages), \
+            f"{x.id} has an empty turn"
+        assert bool(x.prompt) != bool(x.turns), \
+            f"{x.id} must declare exactly one of prompt or turns"
         if x.detect != "canary":
             assert x.match, f"{x.id} needs a match value"
         if x.detect == "absent":
@@ -292,3 +295,101 @@ def test_blank_response_is_never_a_finding():
     for vec in engine.load_vectors():
         assert engine.evaluate("", vec, canary) == "", f"{vec.id} fired on an empty response"
         assert engine.evaluate("   \n ", vec, canary) == "", f"{vec.id} fired on whitespace"
+
+
+# --- multi-turn ------------------------------------------------------------
+
+def test_single_turn_vector_is_a_conversation_of_one():
+    v = Vector(id="t", category="c", severity="low", title="t", detect="canary",
+               prompt="hello")
+    assert v.messages == ["hello"]
+
+
+def test_turns_vector_exposes_its_turns():
+    v = Vector(id="t", category="c", severity="low", title="t", detect="canary",
+               turns=["one", "two"])
+    assert v.messages == ["one", "two"]
+
+
+def test_conversation_accumulates_history(monkeypatch):
+    """Each turn must see everything that came before it, or a crescendo vector
+    is just three unrelated single-turn probes."""
+    seen = []
+
+    def spy(model, system, prompt, history=None, **kw):
+        seen.append((prompt, list(history or [])))
+        return f"reply to {prompt}"
+
+    monkeypatch.setattr(engine, "probe", spy)
+    replies = engine.converse("m", "sys", ["a", "b", "c"])
+
+    assert replies == ["reply to a", "reply to b", "reply to c"]
+    assert seen[0][1] == []
+    assert [m["content"] for m in seen[1][1]] == ["a", "reply to a"]
+    assert [m["content"] for m in seen[2][1]] == ["a", "reply to a", "b", "reply to b"]
+
+
+def test_finding_reports_the_turn_that_leaked(monkeypatch):
+    """A five-turn crescendo that leaks on turn 4 must say 4, not 5."""
+    canary = "ACME-FEEDFACE"
+
+    def leak_on_third(model, system, prompt, history=None, **kw):
+        return canary if len(history or []) == 4 else "I can't share that."
+
+    monkeypatch.setattr(engine, "probe", leak_on_third)
+    v = Vector(id="t", category="c", severity="high", title="t", detect="canary",
+               turns=["1", "2", "3", "4", "5"])
+    results, _ = engine.run_scan("m", [v], canary=canary)
+
+    assert results[0].vulnerable
+    assert results[0].turn == 3
+    assert len(results[0].replies) == 5
+
+
+def test_clean_multi_turn_result_keeps_every_reply(monkeypatch):
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: HEDGE)
+    v = Vector(id="t", category="c", severity="low", title="t", detect="canary",
+               turns=["a", "b", "c"])
+    results, _ = engine.run_scan("m", [v])
+    assert not results[0].vulnerable
+    assert results[0].turn == 0
+    assert len(results[0].replies) == 3
+
+
+def test_throttle_applies_per_turn_not_per_vector(monkeypatch):
+    """Turns are billed requests. Pacing per vector would blow a rate limit."""
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: "ok")
+    v = Vector(id="t", category="c", severity="low", title="t", detect="canary",
+               turns=["a", "b", "c", "d"])
+    start = time.monotonic()
+    engine.run_scan("m", [v], rpm=600, workers=1)     # 100ms between requests
+    assert time.monotonic() - start >= 0.3
+
+
+def test_request_count_includes_every_turn(monkeypatch):
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: HEDGE)
+    vectors = engine.load_vectors()
+    results, canary = engine.run_scan("m", vectors)
+    report = engine.summarise(results, "m", canary)
+    assert report["requests"] == sum(len(v.messages) for v in vectors)
+    assert report["requests"] > report["total"]
+
+
+def test_multi_turn_blank_detection_needs_all_turns_blank(monkeypatch):
+    calls = {"n": 0}
+
+    def one_real_reply(*a, **k):
+        calls["n"] += 1
+        return "" if calls["n"] % 2 else "an actual answer"
+
+    monkeypatch.setattr(engine, "probe", one_real_reply)
+    v = Vector(id="t", category="c", severity="low", title="t", detect="canary",
+               turns=["a", "b"])
+    results, canary = engine.run_scan("m", [v])
+    assert engine.summarise(results, "m", canary)["blank"] == 0
+
+
+def test_shipped_multi_turn_vectors_exist():
+    mt = [v for v in engine.load_vectors() if v.turns]
+    assert len(mt) >= 10
+    assert all(len(v.turns) >= 2 for v in mt)
