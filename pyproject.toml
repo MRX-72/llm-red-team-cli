@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llm-red-team-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "Adversarial test harness for LLM applications. Canary-based, deterministic detection of prompt injection, jailbreaks, system-prompt leakage and PII disclosure."
 readme = "README.md"
 requires-python = ">=3.9"

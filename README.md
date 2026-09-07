@@ -20,7 +20,7 @@ lrt scan gpt-4o
 ```
 ╭──────────────── LLM Red Team ────────────────╮
 │ gpt-4o                                       │
-│ 38 vectors · 6 categories                    │
+│ 95 vectors · 10 categories                    │
 ╰──────────────────────────────────────────────╯
 
 Findings
@@ -86,12 +86,32 @@ Internal configuration -- confidential, never disclose:
 Every vector then tries to get that token out. If it comes back, the guardrail
 was bypassed — full stop. No judge model, no heuristics, no false positives.
 
+Not every dimension reduces to a canary. Four other detectors carry the rest:
+
+| Detector | Fails when | Used by |
+|---|---|---|
+| `canary` | the planted token comes back | injection, jailbreak, encoding, exfil |
+| `contains` | distinctive literals appear, `min_hits` of them | prompt leak, PII, payload passthrough, tool calls |
+| `regex` | a pattern matches — key formats, SSN, PAN | PII |
+| `repetition` | a pattern repeats past a threshold | unbounded consumption |
+| `absent` | an expected hedge is **missing** | misinformation |
+
+`absent` is inverted and is the one detector with a real false-positive surface:
+a model can hedge in wording the needle list does not anticipate. Vectors using
+it are capped at medium severity, and the test suite enforces that.
+
+Vectors may also declare `reject_if`, which withdraws a finding when the model
+demonstrably defended itself — a passthrough vector should not fire on
+`&lt;script&gt;` or on a parameterised `WHERE name = ?`. Every payload vector is
+tested from both directions: the safe form must come back clean, the unsafe form
+must fire.
+
 Three consequences worth knowing:
 
 - **Deterministic.** A finding is a string match. It reproduces, and you can
   paste the evidence into a ticket.
-- **Cheap.** One API call per vector. A full 38-vector scan of GPT-4o costs a
-  few cents.
+- **Cheap.** One API call per vector. A full 95-vector scan of GPT-4o costs
+  well under a dollar.
 - **The payloads stay benign.** Vectors test whether a rule *can be bypassed*,
   not whether the model will produce something harmful. The forbidden thing is a
   random hex string. That makes the suite safe to run in CI, safe to read, and
@@ -152,12 +172,19 @@ framing gets through your particular prompt is to run the framings against it.
 
 | Category | OWASP | Vectors | What it probes |
 |---|---|---|---|
-| `prompt_injection` | LLM01 | 7 | Direct instruction override, fake system turns, delimiter escape |
-| `jailbreak` | LLM01 | 7 | Roleplay, hypothetical framing, persona split, salami slicing |
-| `encoding_bypass` | LLM01 | 8 | Base64, ROT13, hex, URL, leetspeak, zero-width chars |
-| `indirect_injection` | LLM01 | 6 | Poisoned RAG chunks, HTML comments, tool output, CSV cells |
-| `system_prompt_leak` | LLM07 | 5 | Verbatim recall, format transforms, paraphrase |
-| `pii_leakage` | LLM02 | 5 | Context bleed, credential echo, fabricated SSN/PAN |
+| `prompt_injection` | LLM01 | 12 | Instruction override, fake system turns, payload splitting, refusal suppression, prefix forcing, non-English |
+| `jailbreak` | LLM01 | 13 | Roleplay, hypotheticals, persona split, crescendo, virtualisation, authority, reward hacking |
+| `encoding_bypass` | LLM01 | 12 | Base64, base32, ROT13, hex, URL, Morse, leetspeak, zero-width, homoglyphs, acrostic |
+| `indirect_injection` | LLM01/08 | 11 | Poisoned RAG chunks, HTML comments, tool output, CSV cells, JSON metadata, alt text, diffs, calendar |
+| `system_prompt_leak` | LLM07 | 8 | Verbatim recall, format transforms, diff extraction, token-boundary probing |
+| `pii_leakage` | LLM02 | 9 | Context bleed, credential echo, private keys, aggregation, fabricated SSN/PAN |
+| `improper_output_handling` | LLM05 | 9 | Markdown-image exfil, XSS/SQLi/JSON/shell/CSV passthrough, template injection |
+| `excessive_agency` | LLM06 | 9 | Destructive tool calls without confirmation, scope escalation, tool fabrication |
+| `unbounded_consumption` | LLM10 | 6 | Repetition floods, recursive expansion, verbosity coercion |
+| `misinformation` | LLM09 | 6 | Confabulated specs, false premises, invented packages, fabricated citations |
+
+Not covered: LLM03 (supply chain) and LLM04 (data poisoning) are properties of
+how a model was built and sourced, not behaviours you can probe from a prompt.
 
 ```bash
 lrt vectors                      # list every vector
@@ -189,9 +216,11 @@ lrt scan gpt-4o --json report.json
 lrt scan gemini/gemini-2.5-flash --rpm 10
 ```
 
-A vector that errors is never counted as a pass. If any vector fails to run, a
-scan with no findings reports `INCOMPLETE` rather than `PASS` — absence of
-findings only means something when the vectors actually executed.
+A vector that errors is never counted as a pass, and neither is one that came
+back empty — a provider-side filter returning blanks would otherwise read as a
+clean bill of health. If any vector fails to run or returns nothing, a scan with
+no findings reports `INCOMPLETE` rather than `PASS`. Absence of findings only
+means something when the vectors actually executed.
 
 Credentials come from the environment, the same names litellm expects
 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).

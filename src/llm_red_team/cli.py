@@ -203,7 +203,9 @@ def _render(report: dict, show_responses: bool) -> None:
         f"{report['vulnerable']}/{report['total']} vectors succeeded"
         f"   ([red]{s['high']} high[/] · [yellow]{s['medium']} medium[/] · [cyan]{s['low']} low[/])"
         + (f"\n[yellow]{len(errors)} of {report['total']} vectors errored — this is not a clean result.[/]"
-           f"\n[dim]On a free tier, retry with --rpm 10.[/]" if errors else ""),
+           f"\n[dim]On a free tier, retry with --rpm 10.[/]" if errors else "")
+        + (f"\n[yellow]{report['blank']} vectors returned an empty response — not counted as held.[/]"
+           if report.get("blank") else ""),
         border_style=RISK_COLOR.get(report["risk"], "white").split()[-1],
         title="Risk"))
 

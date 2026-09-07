@@ -52,13 +52,16 @@ def test_regex_detector_returns_the_match():
 
 def test_shipped_vectors_are_valid():
     vs = engine.load_vectors()
-    assert len(vs) >= 30
+    assert len(vs) >= 90
     assert {x.severity for x in vs} <= {"high", "medium", "low"}
     for x in vs:
         assert x.detect in engine.DETECTORS
         assert x.prompt.strip(), f"{x.id} has an empty prompt"
         if x.detect != "canary":
             assert x.match, f"{x.id} needs a match value"
+        if x.detect == "absent":
+            # the weakest detector: never allowed to raise a high-severity alarm
+            assert x.severity != "high", f"{x.id} uses absent at high severity"
 
 
 def test_load_vectors_filters():
@@ -88,7 +91,7 @@ def test_run_scan_flags_a_leaking_model(monkeypatch):
 
 
 def test_run_scan_passes_a_refusing_model(monkeypatch):
-    monkeypatch.setattr(engine, "probe", lambda *a, **k: "I'm not able to help with that.")
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: HEDGE)
     results, canary = engine.run_scan("x", engine.load_vectors())
     report = engine.summarise(results, "x", canary)
     assert report["vulnerable"] == 0
@@ -107,7 +110,7 @@ def test_provider_errors_are_reported_not_raised(monkeypatch):
 
 
 def test_summarise_risk_ladder(monkeypatch):
-    monkeypatch.setattr(engine, "probe", lambda *a, **k: "I cannot.")
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: HEDGE)
     results, canary = engine.run_scan("x", engine.load_vectors(severities=["medium"]))
     results[0].vulnerable = True
     assert engine.summarise(results, "x", canary)["risk"] == "MODERATE"
@@ -122,7 +125,7 @@ def test_errors_never_report_as_a_clean_pass(monkeypatch):
         calls["n"] += 1
         if calls["n"] % 2:
             raise RuntimeError("429 rate limit")
-        return "I cannot share that."
+        return HEDGE
 
     monkeypatch.setattr(engine, "probe", flaky)
     results, canary = engine.run_scan("x", engine.load_vectors(severities=["low"]))
@@ -170,20 +173,63 @@ REFUSALS = [
 ]
 
 
+# `absent` is inverted -- for those vectors a plain, non-hedging answer IS the
+# finding -- so the refusal corpus applies only to the positive detectors.
+POSITIVE = {"canary", "contains", "regex", "repetition"}
+
+# Satisfies every `absent` vector's hedge list at once.
+HEDGE = ("I'm sorry, I don't have that information and I'm not able to verify it. "
+         "I can only answer questions about ACME products and support.")
+
+
 @pytest.mark.parametrize("response", REFUSALS)
-def test_no_vector_flags_a_correct_refusal(response):
+def test_no_positive_vector_flags_a_correct_refusal(response):
     canary = engine.new_canary()
     for vec in engine.load_vectors():
+        if vec.detect not in POSITIVE:
+            continue
         ev = engine.evaluate(response, vec, canary)
         assert not ev, f"{vec.id} ({vec.detect}) false-positives on: {response!r} -> {ev!r}"
+
+
+def test_no_vector_at_all_flags_a_hedging_answer():
+    """A model that declines and says why must come back completely clean."""
+    canary = engine.new_canary()
+    for vec in engine.load_vectors():
+        ev = engine.evaluate(HEDGE, vec, canary)
+        assert not ev, f"{vec.id} ({vec.detect}) false-positives on a hedge -> {ev!r}"
+
+
+def test_absent_detector_fires_on_a_confident_answer():
+    """The inverted detector must not be inert: an unhedged answer is the finding."""
+    canary = engine.new_canary()
+    absent = [v for v in engine.load_vectors() if v.detect == "absent"]
+    assert absent
+    for vec in absent:
+        assert engine.evaluate("The battery lasts 18 hours and it is rated IP68.",
+                               vec, canary), f"{vec.id} did not fire"
+
+
+def test_reject_if_withdraws_a_finding():
+    v = Vector(id="t", category="c", severity="low", title="t", prompt="p",
+               detect="contains", match=["<script>"], reject_if=["&lt;script"])
+    assert engine.evaluate("here it is: <script>", v, CANARY)
+    assert engine.evaluate("I escaped it to &lt;script> for safety: <script>", v, CANARY) == ""
+
+
+def test_repetition_detector_counts():
+    v = Vector(id="t", category="c", severity="low", title="t", prompt="p",
+               detect="repetition", match="ACME", min_hits=5)
+    assert engine.evaluate("ACME " * 5, v, CANARY)
+    assert engine.evaluate("ACME " * 4, v, CANARY) == ""
 
 
 def test_system_prompt_leak_still_fires_on_a_real_leak():
     """The refusal fix must not have made the detector inert."""
     leaked = engine.SYSTEM_PROMPT.format(canary="ACME-1234ABCD")
-    fired = [v.id for v in engine.load_vectors(categories=["system_prompt_leak"])
-             if engine.evaluate(leaked, v, "ACME-1234ABCD")]
-    assert len(fired) == 5, f"only {fired} fired on a full system-prompt dump"
+    sp = engine.load_vectors(categories=["system_prompt_leak"])
+    fired = [v.id for v in sp if engine.evaluate(leaked, v, "ACME-1234ABCD")]
+    assert len(fired) == len(sp), f"only {fired} of {len(sp)} fired on a full dump"
 
 
 def test_contains_needs_min_hits():
@@ -205,7 +251,7 @@ def test_results_are_ordered_by_vector_not_by_completion(monkeypatch):
 
     def jittery(model, system, prompt, **kw):
         time.sleep(_random.random() / 400)
-        return "I cannot help with that."
+        return HEDGE
 
     monkeypatch.setattr(engine, "probe", jittery)
     vectors = engine.load_vectors()
@@ -219,3 +265,30 @@ def test_on_result_fires_as_each_vector_lands(monkeypatch):
     vectors = engine.load_vectors(severities=["low"])
     engine.run_scan("x", vectors, workers=4, on_result=lambda r: seen.append(r.vector.id))
     assert len(seen) == len(vectors)
+
+
+def test_blank_responses_do_not_count_as_passes(monkeypatch):
+    """A provider returning empty completions must not read as a clean scan."""
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: "")
+    results, canary = engine.run_scan("x", engine.load_vectors(severities=["low"]))
+    report = engine.summarise(results, "x", canary)
+    assert report["errors"] == 0
+    assert report["blank"] == report["total"]
+    assert report["vulnerable"] == 0
+    assert report["risk"] == "INCOMPLETE"
+
+
+def test_a_genuinely_clean_scan_still_reports_pass(monkeypatch):
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: HEDGE)
+    results, canary = engine.run_scan("x", engine.load_vectors())
+    report = engine.summarise(results, "x", canary)
+    assert report["errors"] == 0 and report["blank"] == 0
+    assert report["risk"] == "PASS"
+
+
+def test_blank_response_is_never_a_finding():
+    """Notably for `absent`, where 'no hedge present' would otherwise fire."""
+    canary = engine.new_canary()
+    for vec in engine.load_vectors():
+        assert engine.evaluate("", vec, canary) == "", f"{vec.id} fired on an empty response"
+        assert engine.evaluate("   \n ", vec, canary) == "", f"{vec.id} fired on whitespace"
