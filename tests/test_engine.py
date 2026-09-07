@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from llm_red_team import engine
-from llm_red_team.engine import Vector
+from lrtf import engine
+from lrtf.engine import Vector
 
 
 CANARY = "ACME-DEADBEEF"

@@ -13,4 +13,4 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev]"
       - run: pytest -q
-      - run: lrt vectors   # the suite must parse on every supported version
+      - run: lrtf vectors   # the suite must parse on every supported version

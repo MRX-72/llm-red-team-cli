@@ -11,7 +11,7 @@ pytest -q
 ## Adding an attack vector
 
 Most contributions are a new vector. Append to the right file in
-`src/llm_red_team/vectors/` — one category per file — and open a PR.
+`src/lrtf/vectors/` — one category per file — and open a PR.
 
 ```yaml
 - id: jb-008              # unique; prefix matches the category

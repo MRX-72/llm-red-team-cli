@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llm-red-team-cli"
-version = "0.4.0"
+version = "0.5.0"
 description = "Adversarial test harness for LLM applications. Canary-based, deterministic detection of prompt injection, jailbreaks, system-prompt leakage and PII disclosure."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,10 +35,10 @@ Homepage = "https://github.com/MRX-72/llm-red-team-cli"
 Issues = "https://github.com/MRX-72/llm-red-team-cli/issues"
 
 [project.scripts]
-lrt = "llm_red_team.cli:app"
+lrtf = "lrtf.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/llm_red_team"]
+packages = ["src/lrtf"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
