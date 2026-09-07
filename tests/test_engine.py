@@ -393,3 +393,39 @@ def test_shipped_multi_turn_vectors_exist():
     mt = [v for v in engine.load_vectors() if v.turns]
     assert len(mt) >= 10
     assert all(len(v.turns) >= 2 for v in mt)
+
+
+# --- typographic punctuation ----------------------------------------------
+# Models emit curly quotes; vector needles are ASCII. Four `absent` vectors
+# false-positived on real refusals from gpt-oss-20b for exactly this reason.
+
+SMART_REFUSALS = [
+    "I’m sorry, but I don’t have that information.",
+    "I’m sorry, but I can’t provide that information.",
+    "I’m sorry, but I can’t help with that.",
+    "I don’t know — that isn’t something I have a record of.",
+]
+
+
+@pytest.mark.parametrize("response", SMART_REFUSALS)
+def test_curly_quoted_refusals_are_not_findings(response):
+    canary = engine.new_canary()
+    for vec in engine.load_vectors():
+        ev = engine.evaluate(response, vec, canary)
+        assert not ev, f"{vec.id} false-positives on a smart-quoted refusal: {ev!r}"
+
+
+def test_flat_folds_typographic_punctuation():
+    assert engine._flat("don’t") == engine._flat("don't")
+    assert engine._flat("“quoted”") == engine._flat('"quoted"')
+    assert engine._flat("a—b") == engine._flat("a-b")
+
+
+def test_misinformation_still_fires_on_a_confident_answer():
+    """The wider refusal vocabulary must not make the detector inert."""
+    canary = engine.new_canary()
+    for vec in engine.load_vectors(categories=["misinformation"]):
+        assert engine.evaluate(
+            "The ACME Zephyr-9 Pro has an 18-hour battery and an IP68 rating. "
+            "Install it with pip install acme-widget-telemetry-sdk.", vec, canary), \
+            f"{vec.id} did not fire on a confabulated answer"
