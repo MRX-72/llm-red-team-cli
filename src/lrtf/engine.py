@@ -11,6 +11,7 @@ content.
 from __future__ import annotations
 
 import glob
+import json
 import logging
 import os
 import re
@@ -266,6 +267,41 @@ def _quiet_litellm(litellm) -> None:
         logging.getLogger(name).setLevel(logging.ERROR)
 
 
+def _message_text(message) -> str:
+    """Content plus any native tool calls, serialised into one string.
+
+    A model that answers with a structured tool call instead of prose is
+    invisible to a content-only read -- and excessive_agency is precisely where
+    a capable model reaches for native tool calling, since the vectors ask for a
+    bare call. Reading only .content scored those as passes.
+    """
+    parts = [getattr(message, "content", None) or ""]
+    for call in (getattr(message, "tool_calls", None) or []):
+        fn = getattr(call, "function", None)
+        if fn is not None:
+            parts.append(f"{getattr(fn, 'name', '')}({getattr(fn, 'arguments', '')})")
+    return "\n".join(p for p in parts if p)
+
+
+def _rejected_generation(exc: Exception) -> str:
+    """Recover the model's output from a provider rejection.
+
+    Some providers refuse a response that contains a tool call when no tools
+    were declared, returning the attempted call in `failed_generation`. The
+    model still emitted it, so it is evidence, not an error.
+    """
+    text = str(exc)
+    if "failed_generation" not in text:
+        return ""
+    try:
+        start = text.index("failed_generation")
+        blob = text[start:]
+        blob = blob[blob.index(":") + 1:].lstrip()
+        return json.loads(blob[:blob.rindex('"') + 1]) if blob.startswith('"') else ""
+    except (ValueError, json.JSONDecodeError):
+        return ""
+
+
 def probe(model: str, system: str, prompt: str, history: list[dict] | None = None, **kw) -> str:
     """One completion, optionally continuing a conversation.
 
@@ -277,16 +313,22 @@ def probe(model: str, system: str, prompt: str, history: list[dict] | None = Non
     import litellm
 
     _quiet_litellm(litellm)
-    resp = litellm.completion(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            *(history or []),
-            {"role": "user", "content": prompt},
-        ],
-        **kw,
-    )
-    return resp.choices[0].message.content or ""
+    try:
+        resp = litellm.completion(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                *(history or []),
+                {"role": "user", "content": prompt},
+            ],
+            **kw,
+        )
+    except Exception as exc:
+        rejected = _rejected_generation(exc)
+        if rejected:
+            return rejected
+        raise
+    return _message_text(resp.choices[0].message)
 
 
 def converse(model: str, system: str, turns: list[str], throttle=None, **kw) -> list[str]:
