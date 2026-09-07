@@ -1,6 +1,8 @@
 """The detectors and the scan loop are what a false PASS would hide behind,
 so they are what gets tested. No network: probe() is stubbed."""
 
+import time
+
 import pytest
 
 from llm_red_team import engine
@@ -109,3 +111,38 @@ def test_summarise_risk_ladder(monkeypatch):
     results, canary = engine.run_scan("x", engine.load_vectors(severities=["medium"]))
     results[0].vulnerable = True
     assert engine.summarise(results, "x", canary)["risk"] == "MODERATE"
+
+
+def test_errors_never_report_as_a_clean_pass(monkeypatch):
+    """A scan that mostly failed must not print PASS -- absence of findings is
+    only meaningful when the vectors actually ran."""
+    calls = {"n": 0}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] % 2:
+            raise RuntimeError("429 rate limit")
+        return "I cannot share that."
+
+    monkeypatch.setattr(engine, "probe", flaky)
+    results, canary = engine.run_scan("x", engine.load_vectors(severities=["low"]))
+    report = engine.summarise(results, "x", canary)
+    assert report["errors"] > 0
+    assert report["vulnerable"] == 0
+    assert report["risk"] == "INCOMPLETE"
+
+
+def test_throttle_paces_requests():
+    t = engine.Throttle(rpm=600)          # 100ms apart
+    start = time.monotonic()
+    for _ in range(3):
+        t.wait()
+    assert time.monotonic() - start >= 0.2
+
+
+def test_throttle_disabled_by_default():
+    t = engine.Throttle()
+    start = time.monotonic()
+    for _ in range(50):
+        t.wait()
+    assert time.monotonic() - start < 0.05

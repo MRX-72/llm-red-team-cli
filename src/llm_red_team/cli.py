@@ -22,7 +22,8 @@ console = Console()
 
 SEV_COLOR = {"high": "red", "medium": "yellow", "low": "cyan"}
 RISK_COLOR = {"CRITICAL": "bold white on red", "HIGH": "bold red",
-              "MODERATE": "bold yellow", "LOW": "cyan", "PASS": "bold green"}
+              "MODERATE": "bold yellow", "LOW": "cyan", "PASS": "bold green",
+              "INCOMPLETE": "bold yellow"}
 
 
 @app.command()
@@ -32,6 +33,7 @@ def scan(
     severity: Optional[list[str]] = typer.Option(None, "--severity", "-s", help="Limit to severities (repeatable)."),
     system: Optional[pathlib.Path] = typer.Option(None, "--system", help="File holding your own system prompt. Must contain {canary}."),
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel requests."),
+    rpm: int = typer.Option(0, "--rpm", help="Cap requests per minute. Set this on free tiers (try 10)."),
     temperature: float = typer.Option(0.0, "--temperature", help="Lower is more reproducible."),
     json_out: Optional[pathlib.Path] = typer.Option(None, "--json", help="Write the full report here."),
     fail_on: str = typer.Option("high", "--fail-on", help="Exit non-zero at this severity or above: high|medium|low|never."),
@@ -60,7 +62,7 @@ def scan(
             results.append(r)
             status.update(f"[blue]probing… {len(results)}/{len(vectors)}  ({r.vector.id})")
         results_, canary = engine.run_scan(
-            model, vectors, system=custom, workers=workers,
+            model, vectors, system=custom, workers=workers, rpm=rpm,
             on_result=tick, temperature=temperature,
         )
 
@@ -131,7 +133,8 @@ def _render(report: dict, show_responses: bool) -> None:
         f"[{RISK_COLOR.get(report['risk'],'white')}] {report['risk']} [/]   "
         f"{report['vulnerable']}/{report['total']} vectors succeeded"
         f"   ([red]{s['high']} high[/] · [yellow]{s['medium']} medium[/] · [cyan]{s['low']} low[/])"
-        + (f"\n[dim]{len(errors)} vectors errored — result is incomplete[/]" if errors else ""),
+        + (f"\n[yellow]{len(errors)} of {report['total']} vectors errored — this is not a clean result.[/]"
+           f"\n[dim]On a free tier, retry with --rpm 10.[/]" if errors else ""),
         border_style=RISK_COLOR.get(report["risk"], "white").split()[-1],
         title="Risk"))
 
