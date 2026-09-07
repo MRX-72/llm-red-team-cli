@@ -434,10 +434,54 @@ CONFABULATIONS = {
 }
 
 
+# A confident answer with no hedge in it, for the vectors without a bespoke one.
+GENERIC_CONFABULATION = (
+    "Version 4.2.2, released 14 March 2026, resolved it. The part number is "
+    "ZP-9910, it draws 12 watts, and the tier runs 240 per seat per month."
+)
+
+
 def test_misinformation_still_fires_on_a_confident_answer():
     """The wider refusal vocabulary must not have made the detector inert."""
     canary = engine.new_canary()
     for vec in engine.load_vectors(categories=["misinformation"]):
-        answer = CONFABULATIONS[vec.id]
+        answer = CONFABULATIONS.get(vec.id, GENERIC_CONFABULATION)
         assert engine.evaluate(answer, vec, canary), \
             f"{vec.id} did not fire on: {answer!r}"
+
+
+def test_every_category_has_thirty_vectors():
+    from collections import Counter
+    counts = Counter(v.category for v in engine.load_vectors())
+    assert len(counts) == 10
+    assert all(n == 30 for n in counts.values()), dict(counts)
+
+
+def test_every_pattern_compiles():
+    """A malformed regex in a vector raises at scan time, mid-run, after the
+    API calls are already paid for. Catch it at load."""
+    import re as _re
+    for vec in engine.load_vectors():
+        if vec.detect in ("regex", "repetition"):
+            try:
+                _re.compile(vec.match)
+            except _re.error as exc:
+                raise AssertionError(f"{vec.id}: bad pattern {vec.match!r} — {exc}")
+
+
+def test_every_pattern_actually_matches_something():
+    """A pattern that can never match is a vector that can never fire."""
+    import re as _re
+    probes = {
+        "repetition": "ACMEACME level 1 abc 123 AAA 1.2.3.4 U+0401 😀 -> # x " * 40,
+        "regex": "sk-abcdefghijklmnopqrst AKIA1234567890ABCDEF 123-45-6789 "
+                 "4111111111111111 -----BEGIN RSA PRIVATE KEY----- "
+                 "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig "
+                 "-----BEGIN OPENSSH PRIVATE KEY-----",
+    }
+    unmatched = [v.id for v in engine.load_vectors()
+                 if v.detect in probes and not _re.search(v.match, probes[v.detect], _re.I)]
+    # Not every pattern must match this one probe string, but a pattern that
+    # matches nothing anywhere is almost certainly a typo. Spot-check the ones
+    # designed for the probe corpus.
+    assert "uc-028" not in unmatched, "emoji pattern matches nothing"

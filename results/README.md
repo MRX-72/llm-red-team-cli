@@ -1,5 +1,9 @@
 # Test results
 
+> **These are 107-vector-suite results.** The suite now has 300 vectors — every
+> category was expanded to 30 after these scans. The findings here still stand,
+> but they cover roughly a third of the current suite. A re-run is pending.
+
 Raw output from every scan behind the numbers in the main README. Nothing here
 is summarised — each file is the exact `--json` report `lrtf` wrote, including
 the full text the model returned for all 107 vectors, pass or fail.
