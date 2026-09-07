@@ -55,8 +55,10 @@ def scan(
             console.print("[red]--system file must contain the literal {canary} placeholder.[/]")
             raise typer.Exit(2)
 
+    requests = sum(len(v.messages) for v in vectors)
+    extra = f" · {requests} requests" if requests != len(vectors) else ""
     console.print(Panel(f"[bold]{model}[/]\n{len(vectors)} vectors · "
-                        f"{len({v.category for v in vectors})} categories",
+                        f"{len({v.category for v in vectors})} categories{extra}",
                         title="LLM Red Team", border_style="blue"))
 
     kw = dict(system=custom, workers=workers, rpm=rpm, temperature=temperature)
@@ -94,14 +96,17 @@ def vectors(
 ):
     """List the attack vectors in the suite without calling any model."""
     table = Table(box=None, pad_edge=False)
-    for col in ("ID", "SEVERITY", "CATEGORY", "TITLE"):
+    for col in ("ID", "SEVERITY", "CATEGORY", "TURNS", "TITLE"):
         table.add_column(col)
     vs = engine.load_vectors(categories=category)
     for v in vs:
+        n = len(v.messages)
         table.add_row(v.id, f"[{SEV_COLOR.get(v.severity,'white')}]{v.severity}[/]",
-                      v.category, v.title)
+                      v.category, str(n) if n > 1 else "[dim]1[/]", v.title)
     console.print(table)
-    console.print(f"\n[dim]{len(vs)} vectors[/]")
+    requests = sum(len(v.messages) for v in vs)
+    console.print(f"\n[dim]{len(vs)} vectors · {requests} requests per scan · "
+                  f"{sum(1 for v in vs if v.turns)} multi-turn[/]")
 
 
 class LiveScan:
@@ -167,18 +172,92 @@ class LiveScan:
         )
 
 
+@app.command()
+def diff(
+    baseline: pathlib.Path = typer.Argument(..., help="Earlier report from --json."),
+    current: pathlib.Path = typer.Argument(..., help="Later report from --json."),
+    fail_on_regression: bool = typer.Option(
+        True, "--fail-on-regression/--no-fail", help="Exit non-zero if anything regressed."),
+):
+    """Compare two reports: what got fixed, what regressed, what still fails.
+
+    A single scan tells you a prompt is weak. This tells you whether the change
+    you made to it actually worked, which is the question anyone maintaining a
+    system prompt asks second.
+    """
+    a, b = (json.loads(p.read_text()) for p in (baseline, current))
+    old = {f["vector"]["id"]: f for f in a["findings"]}
+    new = {f["vector"]["id"]: f for f in b["findings"]}
+
+    def bucket(vid):
+        was, now = old.get(vid), new.get(vid)
+        if was is None:
+            return "ADDED" if now and now["vulnerable"] else None
+        if now is None:
+            return "DROPPED" if was["vulnerable"] else None
+        # A vector that errored was not tested; calling that a fix would be a lie.
+        if was["error"] or now["error"]:
+            return "UNTESTED" if (was["vulnerable"] or now["vulnerable"]) else None
+        if was["vulnerable"] and not now["vulnerable"]:
+            return "FIXED"
+        if not was["vulnerable"] and now["vulnerable"]:
+            return "REGRESSED"
+        return "STILL FAILING" if now["vulnerable"] else None
+
+    STYLE = {"REGRESSED": "bold red", "STILL FAILING": "yellow", "FIXED": "green",
+             "ADDED": "red", "DROPPED": "dim", "UNTESTED": "yellow"}
+    rows = []
+    for vid in sorted(old | new):
+        state = bucket(vid)
+        if state:
+            meta = (new.get(vid) or old[vid])["vector"]
+            rows.append((state, vid, meta["severity"], meta["category"], meta["title"]))
+
+    header = Table.grid(padding=(0, 2))
+    header.add_column(style="dim")
+    header.add_column()
+    header.add_row("baseline", f"{a['model']}  ·  {a['scanned_at']}  ·  {a['risk']}")
+    header.add_row("current", f"{b['model']}  ·  {b['scanned_at']}  ·  {b['risk']}")
+    console.print(Panel(header, title="Diff", border_style="blue"))
+
+    if not rows:
+        console.print("\n[green]No change — both scans agree on every vector.[/]")
+        raise typer.Exit(0)
+
+    order = ["REGRESSED", "ADDED", "STILL FAILING", "UNTESTED", "FIXED", "DROPPED"]
+    table = Table(box=None, pad_edge=False)
+    for col in ("STATE", "ID", "SEVERITY", "CATEGORY", "TITLE"):
+        table.add_column(col, overflow="fold")
+    for state in order:
+        for row in [r for r in rows if r[0] == state]:
+            table.add_row(f"[{STYLE[state]}]{state}[/]", row[1],
+                          f"[{SEV_COLOR.get(row[2],'white')}]{row[2]}[/]", row[3], row[4])
+    console.print()
+    console.print(table)
+
+    counts = {s: sum(1 for r in rows if r[0] == s) for s in order}
+    summary = "  ".join(f"[{STYLE[s]}]{counts[s]} {s.lower()}[/]" for s in order if counts[s])
+    regressed = counts["REGRESSED"] + counts["ADDED"]
+    console.print(Panel(summary, border_style="red" if regressed else "green"))
+
+    if regressed and fail_on_regression:
+        raise typer.Exit(1)
+
+
 def _render(report: dict, show_responses: bool) -> None:
     findings = [f for f in report["findings"] if f["vulnerable"]]
     errors = [f for f in report["findings"] if f["error"]]
 
     if findings:
         table = Table(title="Findings", title_justify="left", box=None, pad_edge=False)
-        for col in ("ID", "SEVERITY", "CATEGORY", "TITLE", "EVIDENCE"):
+        for col in ("ID", "SEVERITY", "CATEGORY", "TITLE", "TURN", "EVIDENCE"):
             table.add_column(col, overflow="fold")
         for f in findings:
             v = f["vector"]
+            turns = len(v.get("turns") or []) or 1
+            where = f"{f['turn']}/{turns}" if turns > 1 else "—"
             table.add_row(v["id"], f"[{SEV_COLOR.get(v['severity'],'white')}]{v['severity'].upper()}[/]",
-                          v["category"], v["title"], f["evidence"][:60])
+                          v["category"], v["title"], where, f["evidence"][:60])
         console.print()
         console.print(table)
 
@@ -214,6 +293,14 @@ def _render(report: dict, show_responses: bool) -> None:
 
     if show_responses:
         for f in findings:
-            console.print(Panel(f["response"][:1200] or "[dim](empty)[/]",
-                                title=f"{f['vector']['id']} — {f['vector']['title']}",
-                                border_style="red"))
+            v = f["vector"]
+            turns = v.get("turns") or [v.get("prompt", "")]
+            if len(turns) > 1:
+                body = []
+                for i, (t, r) in enumerate(zip(turns, f.get("replies") or []), start=1):
+                    flag = " [red]← leaked here[/]" if i == f["turn"] else ""
+                    body.append(f"[bold]turn {i}{flag}[/]\n[dim]> {' '.join(t.split())[:200]}[/]\n{r[:600]}")
+                text = "\n\n".join(body)
+            else:
+                text = f["response"][:1200] or "[dim](empty)[/]"
+            console.print(Panel(text, title=f"{v['id']} — {v['title']}", border_style="red"))
