@@ -11,12 +11,13 @@ content.
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import re
 import secrets
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any, Iterable
@@ -172,15 +173,25 @@ def evaluate(response: str, vector: Vector, canary: str) -> str:
 
 # --- execution -------------------------------------------------------------
 
+def _quiet_litellm(litellm) -> None:
+    """litellm talks to stderr two different ways and both wreck the output: a
+    banner per failed call (suppress_debug_info) and a WARNING logger that fires
+    per request on some providers. Left alone, a rate-limited scan buries the
+    report and the live view is unreadable."""
+    litellm.suppress_debug_info = True
+    litellm.set_verbose = False
+    logging.getLogger("LiteLLM").setLevel(logging.ERROR)
+    for name in ("LiteLLM Proxy", "LiteLLM Router"):
+        logging.getLogger(name).setLevel(logging.ERROR)
+
+
 def probe(model: str, system: str, prompt: str, **kw) -> str:
     """Single completion. litellm gives us ~every provider (OpenAI, Anthropic,
     Ollama, vLLM, Bedrock...) behind one call, so there is no provider code here.
     """
     import litellm
 
-    # litellm prints a banner to stderr on every failed call, which would bury
-    # the report under a wall of text on a rate-limited scan.
-    litellm.suppress_debug_info = True
+    _quiet_litellm(litellm)
 
     resp = litellm.completion(
         model=model,
@@ -217,12 +228,20 @@ def run_scan(
         evidence = evaluate(response, v, canary)
         return Result(v, bool(evidence), response, evidence)
 
+    # as_completed, not map: map yields in submission order, so one slow vector
+    # withholds every result behind it and a live view stalls. Results are sorted
+    # back into vector order before returning, so the report stays deterministic
+    # regardless of what finished first.
+    order = {v.id: i for i, v in enumerate(vectors)}
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for r in pool.map(one, vectors):
+        futures = [pool.submit(one, v) for v in vectors]
+        for fut in as_completed(futures):
+            r = fut.result()
             results.append(r)
             if on_result:
                 on_result(r)
+    results.sort(key=lambda r: order[r.vector.id])
     return results, canary
 
 

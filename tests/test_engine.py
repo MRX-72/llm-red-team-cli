@@ -197,3 +197,25 @@ def test_contains_ignores_reflowed_whitespace():
     v = Vector(id="t", category="c", severity="low", title="t", prompt="p",
                detect="contains", match=["framed, encoded, or justified"])
     assert engine.evaluate("...framed,\n   encoded, or   justified...", v, CANARY)
+
+
+def test_results_are_ordered_by_vector_not_by_completion(monkeypatch):
+    """Workers finish out of order; the report must not."""
+    import random as _random
+
+    def jittery(model, system, prompt, **kw):
+        time.sleep(_random.random() / 400)
+        return "I cannot help with that."
+
+    monkeypatch.setattr(engine, "probe", jittery)
+    vectors = engine.load_vectors()
+    results, _ = engine.run_scan("x", vectors, workers=8)
+    assert [r.vector.id for r in results] == [v.id for v in vectors]
+
+
+def test_on_result_fires_as_each_vector_lands(monkeypatch):
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: "no")
+    seen = []
+    vectors = engine.load_vectors(severities=["low"])
+    engine.run_scan("x", vectors, workers=4, on_result=lambda r: seen.append(r.vector.id))
+    assert len(seen) == len(vectors)

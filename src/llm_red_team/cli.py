@@ -7,8 +7,10 @@ import pathlib
 from typing import Optional
 
 import typer
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.panel import Panel
+from rich.progress import BarColumn, Progress, TextColumn
 from rich.table import Table
 
 from . import engine
@@ -38,6 +40,7 @@ def scan(
     json_out: Optional[pathlib.Path] = typer.Option(None, "--json", help="Write the full report here."),
     fail_on: str = typer.Option("high", "--fail-on", help="Exit non-zero at this severity or above: high|medium|low|never."),
     show_responses: bool = typer.Option(False, "--show-responses", help="Print the model reply for each finding."),
+    tui: bool = typer.Option(False, "--tui", help="Live view: watch each vector land as it completes."),
 ):
     """Run the adversarial suite against a model and report what got through."""
     vectors = engine.load_vectors(categories=category, severities=severity)
@@ -56,15 +59,18 @@ def scan(
                         f"{len({v.category for v in vectors})} categories",
                         title="LLM Red Team", border_style="blue"))
 
-    results = []
-    with console.status("[blue]probing…") as status:
-        def tick(r):
-            results.append(r)
-            status.update(f"[blue]probing… {len(results)}/{len(vectors)}  ({r.vector.id})")
-        results_, canary = engine.run_scan(
-            model, vectors, system=custom, workers=workers, rpm=rpm,
-            on_result=tick, temperature=temperature,
-        )
+    kw = dict(system=custom, workers=workers, rpm=rpm, temperature=temperature)
+    if tui:
+        view = LiveScan(model, len(vectors))
+        with Live(view, console=console, refresh_per_second=8, transient=True):
+            results_, canary = engine.run_scan(model, vectors, on_result=view.add, **kw)
+    else:
+        done = [0]
+        with console.status("[blue]probing…") as status:
+            def tick(r):
+                done[0] += 1
+                status.update(f"[blue]probing… {done[0]}/{len(vectors)}  ({r.vector.id})")
+            results_, canary = engine.run_scan(model, vectors, on_result=tick, **kw)
 
     report = engine.summarise(results_, model, canary)
     _render(report, show_responses)
@@ -96,6 +102,69 @@ def vectors(
                       v.category, v.title)
     console.print(table)
     console.print(f"\n[dim]{len(vs)} vectors[/]")
+
+
+class LiveScan:
+    """Live view of a scan in flight.
+
+    Built on rich.live rather than a TUI framework: the scan is a flat list of
+    independent probes with no interaction, so a re-rendered frame per result is
+    the whole requirement. Rich is already a dependency; Textual would be a new
+    one plus an app lifecycle for a view with no input.
+    """
+
+    MARK = {True: "[red]✗[/]", False: "[green]✓[/]"}
+
+    def __init__(self, model: str, total: int):
+        self.total = total
+        self.rows: list[tuple] = []
+        self.counts = {"high": 0, "medium": 0, "low": 0}
+        self.errors = 0
+        self.progress = Progress(
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(complete_style="blue", finished_style="blue"),
+            TextColumn("[dim]{task.completed}/{task.total}"),
+            expand=True,
+        )
+        self.task = self.progress.add_task(model, total=total)
+
+    def add(self, result) -> None:
+        v = result.vector
+        if result.error:
+            self.errors += 1
+            mark, detail = "[yellow]![/]", f"[yellow]{result.error.split(':')[0]}[/]"
+        else:
+            mark = self.MARK[result.vulnerable]
+            detail = f"[red]{result.evidence[:38]}[/]" if result.vulnerable else "[dim]held[/]"
+            if result.vulnerable:
+                self.counts[v.severity] = self.counts.get(v.severity, 0) + 1
+        self.rows.append((mark, v.id, v.category, v.title, detail))
+        self.progress.advance(self.task)
+
+    def __rich__(self) -> Group:
+        # Keep the newest rows visible; the full list prints in the report.
+        room = max(4, console.size.height - 10)
+        table = Table.grid(padding=(0, 1), expand=True)
+        table.add_column(width=1)
+        table.add_column(width=8, style="dim")
+        table.add_column(width=18)
+        table.add_column(ratio=1, overflow="ellipsis", no_wrap=True)
+        table.add_column(width=40, overflow="ellipsis", no_wrap=True)
+        for row in self.rows[-room:]:
+            table.add_row(*row)
+
+        c = self.counts
+        found = sum(c.values())
+        tally = (f"[green]no bypasses yet[/]" if not found else
+                 f"[red]{c['high']} high[/] · [yellow]{c['medium']} medium[/] · [cyan]{c['low']} low[/]")
+        if self.errors:
+            tally += f"   [yellow]{self.errors} errored[/]"
+
+        return Group(
+            self.progress,
+            Panel(table, border_style="grey37", padding=(0, 1)),
+            Panel(tally, border_style="grey37", padding=(0, 1)),
+        )
 
 
 def _render(report: dict, show_responses: bool) -> None:
