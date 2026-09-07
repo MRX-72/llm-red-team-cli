@@ -1,4 +1,4 @@
-<h1 align="center">lrtf</h1>
+<h1 align="center">LRTF</h1>
 <p align="center"><b>Adversarial test harness for LLM applications.</b></p>
 
 <p align="center">
