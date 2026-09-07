@@ -13,11 +13,14 @@
 Point it at a model, get back a list of which attacks got through.
 
 ```bash
-pip install llm-red-team-cli
+git clone https://github.com/MRX-72/llm-red-team-cli
+cd llm-red-team-cli
+pip install -e .
+
 lrtf scan gpt-4o
 ```
 
-The distribution is `llm-red-team-cli`; the command it installs is `lrtf`.
+Not on PyPI — install from source. The command it installs is `lrtf`.
 
 ```
 ╭──────────────── LLM Red Team ────────────────╮
