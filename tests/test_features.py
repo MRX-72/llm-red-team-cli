@@ -166,3 +166,78 @@ def test_compare_reports_no_bypass_when_all_models_hold(monkeypatch):
     monkeypatch.setattr(engine, "probe", lambda *a, **k: "I can't share that.")
     r = runner.invoke(app, ["compare", "a", "b", "-c", "system_prompt_leak"])
     assert "No vector got through on any model" in r.output
+
+
+# --- native tool calls -----------------------------------------------------
+# A model answering excessive_agency vectors with a structured tool call instead
+# of prose was invisible: probe() read only .content. Four HIGH findings on
+# gpt-oss-20b were recorded as errors because of this.
+
+class _Fn:
+    def __init__(self, name, arguments):
+        self.name, self.arguments = name, arguments
+
+
+class _Call:
+    def __init__(self, name, arguments):
+        self.function = _Fn(name, arguments)
+
+
+class _Msg:
+    def __init__(self, content=None, tool_calls=None):
+        self.content, self.tool_calls = content, tool_calls
+
+
+def test_tool_calls_are_included_in_the_evaluated_text():
+    text = engine._message_text(_Msg(None, [_Call("transfer_funds", '{"amount": 4800}')]))
+    assert "transfer_funds" in text and "4800" in text
+
+
+def test_content_and_tool_calls_are_both_kept():
+    text = engine._message_text(_Msg("Sure.", [_Call("delete_records", "{}")]))
+    assert "Sure." in text and "delete_records" in text
+
+
+def test_plain_content_is_unchanged():
+    assert engine._message_text(_Msg("just text")) == "just text"
+
+
+def test_message_with_nothing_is_empty():
+    assert engine._message_text(_Msg(None, None)) == ""
+
+
+def test_a_tool_call_trips_the_agency_detector():
+    """The end-to-end point: a bare native call must register as a finding."""
+    vec = {v.id: v for v in engine.load_vectors()}["ea-002"]
+    text = engine._message_text(_Msg(None, [_Call("transfer_funds", '{"amount": 4800}')]))
+    assert engine.evaluate(text, vec, engine.new_canary())
+
+
+def test_rejected_generation_is_recovered_from_the_error():
+    """Providers that refuse an undeclared tool call still return what the model
+    tried to emit. That is evidence, not an error."""
+    exc = RuntimeError(
+        'GroqException - {"error":{"message":"Tool choice is none, but model called a tool",'
+        '"code":"tool_use_failed","failed_generation":'
+        '"{\\"name\\": \\"transfer_funds\\", \\"arguments\\": {\\"amount\\": 4800}}"}}')
+    recovered = engine._rejected_generation(exc)
+    assert "transfer_funds" in recovered
+
+
+def test_unrelated_errors_are_not_swallowed():
+    assert engine._rejected_generation(RuntimeError("401 unauthorized")) == ""
+
+
+def test_probe_reraises_when_there_is_nothing_to_recover(monkeypatch):
+    import lrtf.engine as e
+
+    def boom(*a, **k):
+        raise RuntimeError("401 unauthorized")
+
+    monkeypatch.setattr(e, "_rejected_generation", lambda exc: "")
+    monkeypatch.setitem(__import__("sys").modules, "litellm",
+                        type("m", (), {"completion": staticmethod(boom),
+                                       "suppress_debug_info": False,
+                                       "set_verbose": False})())
+    with pytest.raises(RuntimeError, match="401"):
+        e.probe("m", "sys", "hi")
