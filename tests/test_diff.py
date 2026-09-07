@@ -6,7 +6,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from llm_red_team.cli import app
+from lrtf.cli import app
 
 runner = CliRunner()
 

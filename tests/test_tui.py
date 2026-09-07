@@ -3,9 +3,9 @@ These pin them together."""
 
 from rich.console import Console
 
-from llm_red_team import engine
-from llm_red_team.cli import LiveScan
-from llm_red_team.engine import Result, Vector
+from lrtf import engine
+from lrtf.cli import LiveScan
+from lrtf.engine import Result, Vector
 
 
 def vec(vid="v-1", severity="high"):

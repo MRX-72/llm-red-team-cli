@@ -1,4 +1,4 @@
-<h1 align="center">llm-red-team-cli</h1>
+<h1 align="center">lrtf</h1>
 <p align="center"><b>Adversarial test harness for LLM applications.</b></p>
 
 <p align="center">
@@ -14,8 +14,10 @@ Point it at a model, get back a list of which attacks got through.
 
 ```bash
 pip install llm-red-team-cli
-lrt scan gpt-4o
+lrtf scan gpt-4o
 ```
+
+The distribution is `llm-red-team-cli`; the command it installs is `lrtf`.
 
 ```
 ╭──────────────── LLM Red Team ────────────────╮
@@ -193,21 +195,21 @@ real conversations rather than crammed into a single prompt. Each turn is a
 billed request, which is why the header reports requests as well as vectors.
 
 ```bash
-lrt vectors                      # list every vector
-lrt vectors -c indirect_injection
+lrtf vectors                      # list every vector
+lrtf vectors -c indirect_injection
 ```
 
 ## Did the fix work?
 
-A single scan tells you a prompt is weak. `lrt diff` tells you whether the change
+A single scan tells you a prompt is weak. `lrtf diff` tells you whether the change
 you made to it helped — the question anyone maintaining a system prompt asks
 second:
 
 ```bash
-lrt scan gpt-4o --system prompt-v1.txt --json baseline.json
+lrtf scan gpt-4o --system prompt-v1.txt --json baseline.json
 # ... harden the prompt ...
-lrt scan gpt-4o --system prompt-v2.txt --json current.json
-lrt diff baseline.json current.json
+lrtf scan gpt-4o --system prompt-v2.txt --json current.json
+lrtf diff baseline.json current.json
 ```
 
 ```
@@ -229,28 +231,28 @@ evidence that anything was repaired.
 
 ```bash
 # any provider litellm supports
-lrt scan gpt-4o
-lrt scan anthropic/claude-sonnet-4-5
-lrt scan ollama/llama3
+lrtf scan gpt-4o
+lrtf scan anthropic/claude-sonnet-4-5
+lrtf scan ollama/llama3
 
 # narrow the scan
-lrt scan gpt-4o -c jailbreak -c encoding_bypass
-lrt scan gpt-4o --severity high
+lrtf scan gpt-4o -c jailbreak -c encoding_bypass
+lrtf scan gpt-4o --severity high
 
 # see exactly what the model said when it failed
-lrt scan gpt-4o --show-responses
+lrtf scan gpt-4o --show-responses
 
 # live view: watch each vector land as it completes
-lrt scan gpt-4o --tui
+lrtf scan gpt-4o --tui
 
 # multi-turn findings print the whole conversation and mark the turn that leaked
-lrt scan gpt-4o -c jailbreak --show-responses
+lrtf scan gpt-4o -c jailbreak --show-responses
 
 # machine-readable
-lrt scan gpt-4o --json report.json
+lrtf scan gpt-4o --json report.json
 
 # free tiers are strict; pace the scan so vectors do not error out
-lrt scan gemini/gemini-2.5-flash --rpm 10
+lrtf scan gemini/gemini-2.5-flash --rpm 10
 ```
 
 A vector that errors is never counted as a pass, and neither is one that came
@@ -269,16 +271,16 @@ real system prompt in a file, leave a `{canary}` placeholder where a secret woul
 sit, and scan that:
 
 ```bash
-lrt scan gpt-4o --system ./my_prompt.txt
+lrtf scan gpt-4o --system ./my_prompt.txt
 ```
 
 ### In CI
 
-`lrt` exits `1` when anything at or above `--fail-on` gets through, so it gates a
+`lrtf` exits `1` when anything at or above `--fail-on` gets through, so it gates a
 deploy like any other test:
 
 ```yaml
-- run: lrt scan gpt-4o --fail-on high --json report.json
+- run: lrtf scan gpt-4o --fail-on high --json report.json
 ```
 
 `--fail-on` takes `high` (default), `medium`, `low`, or `never`.
@@ -307,7 +309,7 @@ deploy like any other test:
 
 ## Contributing a vector
 
-Vectors are plain YAML in `src/llm_red_team/vectors/`. Adding one is a
+Vectors are plain YAML in `src/lrtf/vectors/`. Adding one is a
 single-file PR:
 
 ```yaml
