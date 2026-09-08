@@ -215,3 +215,20 @@ def test_normal_needles_are_fine():
 def test_regex_patterns_are_not_needle_checked():
     """A regex is checked by E001; whitespace is meaningful inside one."""
     assert "E012" not in codes(v(detect="repetition", match=r"\s{4,}", min_hits=5))
+
+
+def test_unpaired_surrogate_in_a_prompt_is_an_error():
+    """Emoji written as a YAML \\udXXX\\udXXX pair stay unpaired surrogates in
+    Python. json.dumps re-escapes them so requests still went out, which is
+    exactly why this hid -- but the string cannot be .encode()d, so every buff
+    raised on it."""
+    v = Vector(id="s-1", category="c", severity="low", title="t",
+               detect="canary", prompt="apple \ud83c\udf4e here")
+    codes = {i.code for i in lint.check([v])}
+    assert "E013" in codes
+
+
+def test_the_built_in_suite_has_no_unpaired_surrogates():
+    for v in engine.load_vectors():
+        for turn in v.messages:
+            turn.encode()      # raises UnicodeEncodeError if any survived

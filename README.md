@@ -649,6 +649,9 @@ lrtf scan gpt-4o -n 5
 # your own payloads, no fork required
 lrtf scan gpt-4o --vectors ./our-vectors/
 
+# one transformation applied to every vector in the suite
+lrtf scan gpt-4o --buff base64
+
 # several models, one table
 lrtf compare gpt-4o anthropic/claude-sonnet-4-5 ollama/llama3
 ```
@@ -682,6 +685,45 @@ turn, and `--repeat 5` makes it 1,645. That number decides whether a scan fits
 inside a metered free tier, and it is not one you can do in your head. It runs
 after parsing, so a malformed `--header` or an unusable `--system` file fails
 here rather than on the run that spends the quota.
+
+### Buffs: one transformation, the whole suite
+
+A vector is one attack. A **buff** is a *dimension* — it rewrites the payload
+turn of every vector it is given, so one transformation multiplies the entire
+suite instead of adding a single entry to it.
+
+```bash
+lrtf scan gpt-4o --buff base64
+lrtf scan gpt-4o --buff base64 --buff tags --buff manyshot
+```
+
+| Buff | What it does |
+|---|---|
+| `base64` | Wraps the instruction and asks the model to decode and act |
+| `rot13` | Same, ROT13 |
+| `leet` | Character substitution the model reads through |
+| `tags` | Hides the instruction in Unicode Tags — invisible in every renderer |
+| `noise` | Best-of-N style surface perturbation, seeded so it stays reproducible |
+| `prefix` | Forces an affirmative opening, so a refusal is no longer a coherent continuation |
+| `manyshot` | Prepends fabricated turns in which the assistant already complied |
+
+Seven buffs across 300 buffable vectors is **2,100 attacks** from 330
+hand-written ones. Check the bill before you run it — `--dry-run` reports 2,352
+requests for that combination.
+
+Nothing calls a model, so a buffed scan stays exactly as reproducible as an
+unbuffed one: the same vector under the same buff produces byte-identical
+prompts every run.
+
+**`absent` vectors are skipped, and the scan says how many.** That detector
+reports "the model answered without hedging", so a buff that garbles the
+question into something answered off-target manufactures a finding where no
+guardrail was bypassed. Every other detector reads the *response*, so rewriting
+the prompt cannot change what counts as evidence — the canary either came back
+or it did not.
+
+Multi-turn vectors are buffed on the **final** turn only. The earlier turns are
+the attack building up; rewriting them destroys the thing being tested.
 
 ### Keep the gate on: `--baseline`
 

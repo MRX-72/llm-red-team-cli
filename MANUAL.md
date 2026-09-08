@@ -149,6 +149,7 @@ the command you will use 90% of the time.
 | `--sample N` | Random subset of size N, **stratified by category**. |
 | `--seed N` | Make `--sample` reproducible. |
 | `--vectors DIR` | Load from your own directories instead of the built-in suite. Repeatable. |
+| `--buff NAME` | Rewrite every selected vector through this transformation. Repeatable. Tab-completes. |
 
 Filters compose. `-c pii_leakage -s high` gives the high-severity PII vectors
 only.
@@ -170,6 +171,45 @@ lrtf scan gpt-4o -i jb-014 -i ea-002
 lrtf scan gpt-4o --sample 30 --seed 7
 lrtf scan gpt-4o --vectors ./our-vectors/      # your payloads, no fork needed
 ```
+
+### 4.1b Buffs — one transformation, the whole suite
+
+A vector is one attack. A **buff** is a *dimension* — it rewrites the payload
+turn of every vector it is given, so one transformation multiplies the entire
+suite instead of adding a single entry to it.
+
+```bash
+lrtf scan gpt-4o --buff base64
+lrtf scan gpt-4o --buff base64 --buff tags --buff manyshot
+```
+
+| Buff | What it does |
+|---|---|
+| `base64` | Wraps the instruction and asks the model to decode and act |
+| `rot13` | Same, ROT13 |
+| `leet` | Character substitution the model reads through |
+| `tags` | Hides the instruction in Unicode Tags — invisible in every renderer |
+| `noise` | Best-of-N style surface perturbation, seeded so it stays reproducible |
+| `prefix` | Forces an affirmative opening, so a refusal is no longer a coherent continuation |
+| `manyshot` | Prepends fabricated turns in which the assistant already complied |
+
+Seven buffs across 300 buffable vectors is **2,100 attacks** from 330
+hand-written ones. Check the bill before you run it — `--dry-run` reports 2,352
+requests for that combination.
+
+Nothing calls a model, so a buffed scan stays exactly as reproducible as an
+unbuffed one: the same vector under the same buff produces byte-identical
+prompts every run.
+
+**`absent` vectors are skipped, and the scan says how many.** That detector
+reports "the model answered without hedging", so a buff that garbles the
+question into something answered off-target manufactures a finding where no
+guardrail was bypassed. Every other detector reads the *response*, so rewriting
+the prompt cannot change what counts as evidence — the canary either came back
+or it did not.
+
+Multi-turn vectors are buffed on the **final** turn only. The earlier turns are
+the attack building up; rewriting them destroys the thing being tested.
 
 ### 4.2 Testing your own system prompt
 
@@ -413,6 +453,7 @@ Every rule corresponds to a bug that actually shipped in this project.
 | `E010` | error | Detector needs a `match` value. |
 | `E011` | error | Duplicate vector id. |
 | `E012` | error | Blank entry in `match` or `reject_if` — **a silent kill switch**. |
+| `E013` | error | Unpaired surrogate in a prompt. Write astral characters as `\U0001XXXX`, not a `\udXXX` pair. |
 | `W002` | warning | A needle that appears in the prompt itself; a model that correctly escapes the payload would still match. Consider `reject_if`. |
 
 `--strict` exits non-zero on warnings too.
