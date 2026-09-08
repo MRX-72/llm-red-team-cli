@@ -136,12 +136,27 @@ def load_vectors(
     vectors: list[Vector] = []
     seen: set[str] = set()
     for file in files:
-        for raw in yaml.safe_load(open(file)) or []:
-            v = Vector(**raw)
+        rows = yaml.safe_load(open(file)) or []
+        if not isinstance(rows, list):
+            raise ValueError(f"{os.path.basename(file)}: expected a list of vectors")
+        for i, raw in enumerate(rows):
+            if not isinstance(raw, dict):
+                raise ValueError(f"{os.path.basename(file)}[{i}]: not a mapping")
+            try:
+                v = Vector(**raw)
+            except TypeError as exc:
+                # Unknown or missing key. Bare, this reads as a stack trace from
+                # dataclass internals with no clue which file to open.
+                raise ValueError(
+                    f"{os.path.basename(file)}[{i}] "
+                    f"(id {raw.get('id', '?')}): {exc}") from None
             if v.id in seen:
                 raise ValueError(f"duplicate vector id: {v.id}")
             if v.detect not in DETECTORS:
                 raise ValueError(f"{v.id}: unknown detector {v.detect!r}")
+            if v.detect in ("regex", "repetition") and not isinstance(v.match, str):
+                raise ValueError(f"{v.id}: {v.detect} needs match to be a single "
+                                 f"pattern string, not {type(v.match).__name__}")
             if bool(v.prompt) == bool(v.turns):
                 raise ValueError(f"{v.id}: needs exactly one of prompt or turns")
             seen.add(v.id)
@@ -426,7 +441,9 @@ def run_scan(
     **kw,
 ) -> tuple[list[Result], str]:
     canary = canary or new_canary()
-    system = (system or SYSTEM_PROMPT).format(canary=canary)
+    # replace, not .format(): a real system prompt carries braces of its own
+    # (a JSON example, a template) and .format() raised KeyError on them.
+    system = (system or SYSTEM_PROMPT).replace("{canary}", canary)
     throttle = Throttle(rpm)
 
     def attempt(v: Vector) -> Result:

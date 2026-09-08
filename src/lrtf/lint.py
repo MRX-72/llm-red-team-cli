@@ -77,6 +77,10 @@ class Issue:
 def _pattern_issues(v: Vector) -> list[Issue]:
     if v.detect not in ("regex", "repetition"):
         return []
+    if not isinstance(v.match, str):
+        return [Issue("error", "E001", v.id,
+                      f"{v.detect} needs one pattern string, not "
+                      f"{type(v.match).__name__}")]
     try:
         re.compile(v.match)
     except re.error as exc:

@@ -530,3 +530,45 @@ def test_complete_scan_records_no_skips(monkeypatch):
     vectors = engine.load_vectors(categories=["jailbreak"])
     results, canary = engine.run_scan("m", vectors)
     assert engine.summarise(results, "m", canary, requested=len(vectors))["skipped"] == 0
+
+
+def test_custom_system_prompt_may_contain_braces(monkeypatch):
+    """A real system prompt carries braces of its own -- a JSON example, a
+    template. .format() raised KeyError on every one of them, which killed the
+    headline use case: point lrtf at your own prompt."""
+    seen = {}
+
+    def fake(model, system, prompt, history=None, **kw):
+        seen["system"] = system
+        return "fine"
+
+    monkeypatch.setattr(engine, "probe", fake)
+    custom = 'Reply as JSON: {"ok": true}. Reference {canary}. Braces {} stay.'
+    _, canary = engine.run_scan("m", engine.load_vectors()[:1], system=custom)
+    assert '{"ok": true}' in seen["system"]
+    assert "Braces {} stay." in seen["system"]
+    assert canary in seen["system"]
+
+
+def test_regex_match_must_be_a_string(tmp_path):
+    """A list here reached re.search and raised mid-scan, after the requests
+    were already paid for."""
+    (tmp_path / "v.yaml").write_text(
+        "- {id: r-1, category: c, severity: high, title: t, detect: regex,"
+        " prompt: p, match: [a, b]}"
+    )
+    with pytest.raises(ValueError, match="single pattern string"):
+        engine.load_vectors(str(tmp_path))
+
+
+def test_bad_yaml_row_names_the_file_and_id(tmp_path):
+    (tmp_path / "v.yaml").write_text(
+        "- {id: v-1, category: c, severity: high, title: t, detect: contains,"
+        " prompt: p, mtach: x}"
+    )
+    with pytest.raises(ValueError, match=r"v\.yaml\[0\] \(id v-1\)"):
+        engine.load_vectors(str(tmp_path))
+
+    (tmp_path / "v.yaml").write_text("id: v-1\ncategory: c\n")
+    with pytest.raises(ValueError, match="expected a list of vectors"):
+        engine.load_vectors(str(tmp_path))
