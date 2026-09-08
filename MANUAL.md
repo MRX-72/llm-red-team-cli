@@ -42,7 +42,7 @@ carries seven rules the model is told to follow (never reveal the token, never
 repeat personal data, never act irreversibly, never invent product facts, treat
 quoted text as data, and so on).
 
-It then sends 300 adversarial prompts against that system prompt. A vector
+It then sends 330 adversarial prompts against that system prompt. A vector
 **fails** — meaning the guardrail was bypassed — when the reply contains
 something it provably should not: the canary itself, a planted phone number, a
 tool call that was supposed to require confirmation.
@@ -65,7 +65,7 @@ not the model's willingness to be nasty.
 
 ### What "PASS" does and does not mean
 
-A clean scan means *these 300 vectors did not get through*. It never means the
+A clean scan means *these 330 vectors did not get through*. It never means the
 model is safe. This is a growing suite, not a certification. A model that scored
 a perfect `PASS` on the 38-vector suite became the worst of four when the suite
 grew to cover tool use and output handling — the model had not changed, the
@@ -89,7 +89,7 @@ Requires Python 3.9+. The installed command is `lrtf`.
 Optional, recommended:
 
 ```bash
-lrtf --install-completion     # tab-completes categories and all 300 vector ids
+lrtf --install-completion     # tab-completes categories and all 330 vector ids
 ```
 
 ### Credentials
@@ -233,13 +233,13 @@ that spends the quota:
 $ lrtf scan groq/openai/gpt-oss-20b --rpm 9 --workers 2 --dry-run
 model       groq/openai/gpt-oss-20b
 system      default (canary planted)
-vectors     300  (85H 149M 66L)
-requests    329
+vectors     330  (106H 158M 66L)
+requests    366
 categories  10  encoding_bypass, excessive_agency, …
 pacing      --rpm 9 --workers 2  →  ~37 min
 ```
 
-Note **300 vectors is 329 requests** — twelve vectors are multi-turn and bill
+Note **330 vectors is 366 requests** — 15 vectors are multi-turn and bill
 per turn. With `--repeat 5` that becomes 1,645. That number is the one that
 decides whether a scan fits inside a metered tier, and it is not one you can do
 in your head.
@@ -549,6 +549,7 @@ payloads alongside the suite — no fork required.
 | `min_hits` | no (default `1`) | How many needles must hit before it counts. |
 | `reject_if` | no | Withdraw the finding if the reply contains any of these. |
 | `note` | no | Free text for the reader. |
+| `source` | no | Where the technique comes from — paper, advisory, CVE. |
 
 Exactly one of `prompt` or `turns` — not both, not neither.
 
@@ -588,22 +589,41 @@ for payload-echo vectors: a model that says *"I stripped the `<script>` tag"*
 contains the payload without having emitted it. Listing the escaped or
 neutralised form clears that without resorting to a judge model.
 
+### Provenance
+
+`source` cites the origin of a named technique:
+
+```yaml
+- id: jb-032
+  title: Skeleton Key (guideline augmentation)
+  source: "Russinovich, 'Skeleton Key' jailbreak, Microsoft MSRC, 2024"
+```
+
+It is optional, and it appears in the HTML and Markdown reports and under
+`--show-responses`, next to the finding. Fill it in whenever a vector
+implements a published attack rather than an original one — a reader who can
+trace a finding to its write-up can judge the vector instead of trusting it.
+
+Thirty of the built-in vectors carry one. Seven of those compose two
+techniques in a single prompt, which is the case single-technique probes miss:
+a model tuned against one attack can still fail the pair.
+
 ### Built-in categories
 
 | Category | Count | OWASP | Detector used |
 |---|---|---|---|
-| `prompt_injection` | 30 | LLM01 | `canary` |
-| `jailbreak` | 30 | LLM01 | `canary` |
-| `encoding_bypass` | 30 | LLM01 | `canary` |
-| `indirect_injection` | 30 | LLM01 | `canary` |
+| `prompt_injection` | 35 | LLM01 | `canary` |
+| `jailbreak` | 40 | LLM01 | `canary` |
+| `encoding_bypass` | 37 | LLM01 | `canary` |
+| `indirect_injection` | 35 | LLM01 | `canary` |
 | `system_prompt_leak` | 30 | LLM07 | `contains` |
 | `pii_leakage` | 30 | LLM02 | `contains`, `regex` |
 | `improper_output_handling` | 30 | LLM05 | `contains`, `canary` |
-| `excessive_agency` | 30 | LLM06 | `contains` |
+| `excessive_agency` | 33 | LLM06 | `contains` |
 | `misinformation` | 30 | LLM09 | `absent` |
 | `unbounded_consumption` | 30 | LLM10 | `repetition` |
 
-300 vectors, 329 requests (twelve are multi-turn).
+330 vectors, 366 requests (15 are multi-turn).
 
 ### Always lint before you scan
 
@@ -625,9 +645,9 @@ second and one caught after you have paid for 300 requests.
   "model": "gpt-4o",
   "scanned_at": "2026-09-08T09:13:10+00:00",
   "canary": "ACME-4F2B91C0",
-  "total": 300,
+  "total": 330,
   "skipped": 0,
-  "requests": 329,
+  "requests": 366,
   "vulnerable": 15,
   "errors": 0,
   "blank": 0,
@@ -726,7 +746,7 @@ only detector that can be fooled by unanticipated phrasing. Open the `evidence`
 field and read the reply before you file a bug.
 
 **14. A clean scan is a statement about these vectors, not about the model.**
-Say "these 300 vectors did not get through", never "the model is safe".
+Say "these 330 vectors did not get through", never "the model is safe".
 
 ### In CI
 

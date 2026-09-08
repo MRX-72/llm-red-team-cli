@@ -92,6 +92,9 @@ def _finding(f: dict) -> str:
     if turns and f.get("turn"):
         bits.append(f'<span class="tag">leaked on turn {e(f["turn"])} of {len(turns)}</span>')
     bits.append(f'<p style="margin:.6rem 0 0"><b>Evidence:</b> <code>{e(f["evidence"])}</code></p>')
+    if v.get("source"):
+        bits.append(f'<p style="margin:.3rem 0 0;font-size:.85em;opacity:.75">'
+                    f'<b>Technique:</b> {e(v["source"])}</p>')
 
     bits.append("<details><summary>Show the exchange</summary>")
     if turns:
@@ -220,6 +223,8 @@ def markdown(rep: dict, title: str = "LRTF scan") -> str:
         for f in findings:
             v = f["vector"]
             out.append(f"**`{v['id']}` — {v['title']}**")
+            if v.get("source"):
+                out.append(f"*Technique: {v['source']}*")
             turns = v.get("turns") or []
             if turns:
                 for i, (t, r) in enumerate(zip(turns, f.get("replies") or []), start=1):

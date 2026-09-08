@@ -37,9 +37,11 @@ def test_cli_rejects_an_unknown_id():
 
 
 def test_exclude_drops_a_category():
+    everything = engine.load_vectors()
+    dropped = sum(v.category == "unbounded_consumption" for v in everything)
     vs = engine.load_vectors(exclude=["unbounded_consumption"])
     assert not [v for v in vs if v.category == "unbounded_consumption"]
-    assert len(vs) == 300 - 30
+    assert len(vs) == len(everything) - dropped
 
 
 def test_exclude_drops_an_id():
