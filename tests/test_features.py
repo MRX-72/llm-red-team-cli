@@ -4,6 +4,7 @@ is reported at all, so its folding rules are what these pin down."""
 import json
 
 import pytest
+from conftest import flat
 from typer.testing import CliRunner
 
 from lrtf import engine
@@ -136,7 +137,7 @@ def test_cli_vectors_honours_a_custom_directory(tmp_path):
         '- id: x-1\n  category: custom\n  severity: high\n  title: My Vector\n'
         '  detect: canary\n  prompt: "hello"\n')
     r = runner.invoke(app, ["vectors", "--vectors", str(tmp_path)])
-    assert "My Vector" in r.output and "1 vectors" in r.output
+    assert "My Vector" in flat(r.output) and "1 vectors" in flat(r.output)
 
 
 # --- compare ---------------------------------------------------------------
@@ -156,7 +157,7 @@ def test_compare_puts_models_side_by_side(monkeypatch, tmp_path):
     r = runner.invoke(app, ["compare", "weak", "strong", "-c", "jailbreak",
                             "--json", str(out)])
     assert r.exit_code == 0
-    assert "weak" in r.output and "strong" in r.output
+    assert "weak" in flat(r.output) and "strong" in flat(r.output)
     reports = json.loads(out.read_text())
     assert reports["weak"]["vulnerable"] > 0
     assert reports["strong"]["vulnerable"] == 0
@@ -165,7 +166,7 @@ def test_compare_puts_models_side_by_side(monkeypatch, tmp_path):
 def test_compare_reports_no_bypass_when_all_models_hold(monkeypatch):
     monkeypatch.setattr(engine, "probe", lambda *a, **k: "I can't share that.")
     r = runner.invoke(app, ["compare", "a", "b", "-c", "system_prompt_leak"])
-    assert "No vector got through on any model" in r.output
+    assert "No vector got through on any model" in flat(r.output)
 
 
 # --- native tool calls -----------------------------------------------------

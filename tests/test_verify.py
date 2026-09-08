@@ -7,6 +7,7 @@ flagged" would manufacture a clean result. That case is tested explicitly.
 
 import json
 
+from conftest import flat
 from typer.testing import CliRunner
 
 from lrtf import engine
@@ -43,7 +44,7 @@ def test_unchanged_report_reports_unchanged(tmp_path):
     p = report(tmp_path, "r.json", [finding("jb-003", True, f"code is {CANARY}")])
     r = runner.invoke(app, ["verify", str(p)])
     assert r.exit_code == 0
-    assert "unchanged" in r.output
+    assert "unchanged" in flat(r.output)
 
 
 def test_a_stale_false_positive_is_reported(tmp_path):
@@ -52,15 +53,15 @@ def test_a_stale_false_positive_is_reported(tmp_path):
     p = report(tmp_path, "r.json",
                [finding("sp-001", True, "I'm sorry, I can't share my reference code.")])
     r = runner.invoke(app, ["verify", str(p)])
-    assert "no longer flagged" in r.output
-    assert "sp-001" in r.output
+    assert "no longer flagged" in flat(r.output)
+    assert "sp-001" in flat(r.output)
 
 
 def test_a_newly_detected_leak_is_reported(tmp_path):
     """The tool-call fix turned stored non-findings into real findings."""
     p = report(tmp_path, "r.json", [finding("jb-003", False, f"UNBOUND: {CANARY}")])
     r = runner.invoke(app, ["verify", str(p)])
-    assert "newly flagged" in r.output
+    assert "newly flagged" in flat(r.output)
 
 
 def test_errored_vectors_are_not_re_judged(tmp_path):
@@ -69,14 +70,14 @@ def test_errored_vectors_are_not_re_judged(tmp_path):
     p = report(tmp_path, "r.json",
                [finding("jb-003", True, "", error="RateLimitError: 429")])
     r = runner.invoke(app, ["verify", str(p)])
-    assert "no longer flagged" not in r.output
-    assert "unchanged" in r.output
+    assert "no longer flagged" not in flat(r.output)
+    assert "unchanged" in flat(r.output)
 
 
 def test_blank_responses_are_not_re_judged(tmp_path):
     p = report(tmp_path, "r.json", [finding("jb-003", False, "   ")])
     r = runner.invoke(app, ["verify", str(p)])
-    assert "newly flagged" not in r.output
+    assert "newly flagged" not in flat(r.output)
 
 
 def test_vector_removed_from_the_suite_is_flagged_not_dropped(tmp_path):
@@ -84,8 +85,8 @@ def test_vector_removed_from_the_suite_is_flagged_not_dropped(tmp_path):
     f["vector"]["id"] = "gone-999"
     p = report(tmp_path, "r.json", [f])
     r = runner.invoke(app, ["verify", str(p)])
-    assert "not in suite" in r.output
-    assert "gone-999" in r.output
+    assert "not in suite" in flat(r.output)
+    assert "gone-999" in flat(r.output)
 
 
 def test_write_rewrites_the_verdicts(tmp_path):
@@ -123,7 +124,7 @@ def test_several_reports_at_once(tmp_path):
     b = report(tmp_path, "b.json", [finding("jb-003", True, f"{CANARY}")])
     r = runner.invoke(app, ["verify", str(a), str(b)])
     assert r.exit_code == 0
-    assert r.output.count("unchanged") == 2
+    assert flat(r.output).count("unchanged") == 2
 
 
 def test_verify_reproduces_the_published_numbers():
@@ -152,7 +153,7 @@ def test_verify_reproduces_the_published_numbers():
 def test_missing_file_is_a_clean_error(tmp_path):
     r = runner.invoke(app, ["verify", str(tmp_path / "nope.json")])
     assert r.exit_code == 2
-    assert "no such report" in r.output
+    assert "no such report" in flat(r.output)
     assert r.exception is None or isinstance(r.exception, SystemExit)
 
 
@@ -161,7 +162,7 @@ def test_malformed_json_is_a_clean_error(tmp_path):
     p.write_text("{not json")
     r = runner.invoke(app, ["verify", str(p)])
     assert r.exit_code == 2
-    assert "not valid JSON" in r.output
+    assert "not valid JSON" in flat(r.output)
 
 
 def test_json_that_is_not_a_report_is_a_clean_error(tmp_path):
@@ -169,7 +170,7 @@ def test_json_that_is_not_a_report_is_a_clean_error(tmp_path):
     p.write_text('{"hello": "world"}')
     r = runner.invoke(app, ["verify", str(p)])
     assert r.exit_code == 2
-    assert "is it an lrtf report" in r.output
+    assert "is it an lrtf report" in flat(r.output)
 
 
 def test_resume_on_a_malformed_report_is_a_clean_error(tmp_path):
@@ -177,7 +178,7 @@ def test_resume_on_a_malformed_report_is_a_clean_error(tmp_path):
     p.write_text("{nope")
     r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "--resume", str(p)])
     assert r.exit_code == 2
-    assert "not valid JSON" in r.output
+    assert "not valid JSON" in flat(r.output)
 
 
 def test_diff_on_a_malformed_report_is_a_clean_error(tmp_path):
