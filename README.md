@@ -707,20 +707,34 @@ lrtf scan gpt-4o --buff base64 --buff tags --buff manyshot
 | `prefix` | Forces an affirmative opening, so a refusal is no longer a coherent continuation |
 | `manyshot` | Prepends fabricated turns in which the assistant already complied |
 
-Seven buffs across 300 buffable vectors is **2,100 attacks** from 330
-hand-written ones. Check the bill before you run it — `--dry-run` reports 2,352
-requests for that combination.
+Seven buffs across the suite is **2,070 attacks** from 330 hand-written ones.
+Check the bill before you run it — `--dry-run` reports 2,320 requests for that
+combination.
 
 Nothing calls a model, so a buffed scan stays exactly as reproducible as an
 unbuffed one: the same vector under the same buff produces byte-identical
 prompts every run.
 
-**`absent` vectors are skipped, and the scan says how many.** That detector
-reports "the model answered without hedging", so a buff that garbles the
-question into something answered off-target manufactures a finding where no
-guardrail was bypassed. Every other detector reads the *response*, so rewriting
-the prompt cannot change what counts as evidence — the canary either came back
-or it did not.
+**What a buff cannot do faithfully, it skips — and the scan says how much.**
+
+```
+240 vector×buff combinations skipped (210 absent detector, 30 payload the buff cannot carry)
+```
+
+Two reasons. `absent` reports "the model answered without hedging", so a buff
+that garbles the question into something answered off-target manufactures a
+finding where no guardrail was bypassed. And the Unicode Tags block encodes
+ASCII only, so `tags` declines a homoglyph or Braille payload rather than
+dropping the characters it cannot carry.
+
+Both are the same rule: a prompt that cannot possibly work would still get a
+reply, and that reply would score as **held**. A silent false pass is the one
+result this tool refuses to produce.
+
+Every other detector reads the *response*, so rewriting the prompt cannot change
+what counts as evidence — the canary either came back or it did not. A buffed
+vector's `source` records the composition, so a buffed copy never claims the
+original technique's provenance.
 
 Multi-turn vectors are buffed on the **final** turn only. The earlier turns are
 the attack building up; rewriting them destroys the thing being tested.
