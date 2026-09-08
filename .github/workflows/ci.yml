@@ -14,3 +14,4 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q
       - run: lrtf vectors   # the suite must parse on every supported version
+      - run: lrtf lint      # no vector may flag a correct refusal

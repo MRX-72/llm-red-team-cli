@@ -13,7 +13,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TextColumn
 from rich.table import Table
 
-from . import engine, report as report_mod
+from . import engine, lint as lint_mod, report as report_mod
 
 app = typer.Typer(
     add_completion=False,
@@ -341,6 +341,118 @@ def compare(
     if json_out:
         json_out.write_text(json.dumps(reports, indent=2))
         console.print(f"\n[dim]reports → {json_out}[/]")
+
+
+@app.command()
+def verify(
+    reports: list[pathlib.Path] = typer.Argument(..., help="Reports written by --json."),
+    vectors_dir: Optional[list[pathlib.Path]] = typer.Option(None, "--vectors"),
+    write: bool = typer.Option(False, "--write", help="Rewrite each report with the corrected verdicts."),
+    strict: bool = typer.Option(False, "--strict", help="Exit non-zero if any verdict changed."),
+):
+    """Re-score stored reports against the current detectors. No API calls.
+
+    Changing a detector invalidates every report already on disk, and rescanning
+    costs money and quota. Detection is a deterministic string match over the
+    stored response, so re-running it offline is exact rather than an estimate.
+    """
+    source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
+    vecs = {v.id: v for v in engine.load_vectors(source)}
+    drifted = 0
+
+    for path in reports:
+        rep = json.loads(path.read_text())
+        gained, lost, gone = [], [], []
+        for f in rep["findings"]:
+            vid = f["vector"]["id"]
+            if vid not in vecs:
+                gone.append(vid)
+                continue
+            if f["error"] or not "".join(f.get("replies") or [f["response"]]).strip():
+                continue          # never tested; not ours to re-judge
+            now = bool(engine.evaluate(f["response"], vecs[vid], rep["canary"]))
+            if now and not f["vulnerable"]:
+                gained.append(vid)
+            elif f["vulnerable"] and not now:
+                lost.append(vid)
+            f["vulnerable"] = now
+            f["evidence"] = engine.evaluate(f["response"], vecs[vid], rep["canary"])
+
+        rep["vulnerable"] = sum(f["vulnerable"] for f in rep["findings"])
+        counts = {"high": 0, "medium": 0, "low": 0}
+        for f in rep["findings"]:
+            if f["vulnerable"]:
+                counts[f["vector"]["severity"]] += 1
+        rep["by_severity"] = counts
+
+        table = Table(box=None, pad_edge=False)
+        for col in ("", "COUNT", "VECTORS"):
+            table.add_column(col, overflow="fold")
+        if lost:
+            table.add_row("[green]no longer flagged[/]", str(len(lost)), ", ".join(sorted(lost)[:12]))
+        if gained:
+            table.add_row("[red]newly flagged[/]", str(len(gained)), ", ".join(sorted(gained)[:12]))
+        if gone:
+            table.add_row("[dim]not in suite[/]", str(len(gone)), ", ".join(sorted(gone)[:12]))
+
+        drifted += len(gained) + len(lost)
+        console.print(Panel(f"[bold]{path}[/]\n{rep['model']} · "
+                            f"{rep['vulnerable']}/{rep['total']} findings after re-scoring",
+                            border_style="yellow" if (gained or lost) else "green"))
+        if gained or lost or gone:
+            console.print(table)
+        else:
+            console.print("[green]unchanged — stored verdicts match the current detectors[/]")
+
+        if write:
+            path.write_text(json.dumps(rep, indent=2))
+            console.print(f"[dim]rewritten → {path}[/]")
+
+    if strict and drifted:
+        raise typer.Exit(1)
+
+
+@app.command()
+def lint(
+    vectors_dir: Optional[list[pathlib.Path]] = typer.Option(None, "--vectors", help="Lint these directories instead of the built-in suite."),
+    category: Optional[list[str]] = typer.Option(None, "--category", "-c"),
+    warnings_as_errors: bool = typer.Option(False, "--strict", help="Exit non-zero on warnings too."),
+):
+    """Check vectors for the mistakes that make a scanner lie. No API calls.
+
+    Every rule here corresponds to a bug that actually shipped: a pattern that
+    raised mid-scan after the requests were paid for, needles that flagged a
+    correct refusal as a finding, an ASCII apostrophe that missed a curly one.
+    """
+    source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
+    try:
+        vectors = engine.load_vectors(source, categories=category)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2)
+
+    issues = lint_mod.check(vectors)
+    errors = [i for i in issues if i.level == "error"]
+    warns = [i for i in issues if i.level == "warning"]
+
+    if issues:
+        table = Table(box=None, pad_edge=False)
+        for col in ("", "CODE", "VECTOR", "PROBLEM"):
+            table.add_column(col, overflow="fold")
+        for i in issues:
+            colour = "red" if i.level == "error" else "yellow"
+            table.add_row(f"[{colour}]{i.level}[/]", i.code, i.vector, i.message)
+        console.print(table)
+        console.print()
+
+    verdict = (f"[red]{len(errors)} error(s)[/]" if errors else "[green]no errors[/]")
+    if warns:
+        verdict += f" · [yellow]{len(warns)} warning(s)[/]"
+    console.print(Panel(f"{verdict}   [dim]{len(vectors)} vectors checked[/]",
+                        border_style="red" if errors else "yellow" if warns else "green"))
+
+    if errors or (warns and warnings_as_errors):
+        raise typer.Exit(1)
 
 
 @app.command()
