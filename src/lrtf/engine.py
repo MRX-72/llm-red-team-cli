@@ -91,6 +91,7 @@ class Vector:
     min_hits: int = 1
     reject_if: Any = None
     note: str = ""
+    source: str = ""      # where the technique comes from: paper, advisory, CVE
 
     @property
     def messages(self) -> list[str]:

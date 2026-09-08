@@ -691,4 +691,7 @@ def _render(report: dict, show_responses: bool) -> None:
                 text = "\n\n".join(body)
             else:
                 text = f["response"][:1200] or "[dim](empty)[/]"
-            console.print(Panel(text, title=f"{v['id']} — {v['title']}", border_style="red"))
+            subtitle = f"[dim]{v['source']}[/]" if v.get("source") else None
+            console.print(Panel(text, title=f"{v['id']} — {v['title']}",
+                                subtitle=subtitle, subtitle_align="left",
+                                border_style="red"))

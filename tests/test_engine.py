@@ -450,11 +450,14 @@ def test_misinformation_still_fires_on_a_confident_answer():
             f"{vec.id} did not fire on: {answer!r}"
 
 
-def test_every_category_has_thirty_vectors():
+def test_every_category_carries_its_share():
+    """Thirty was the floor when the suite was levelled up; the published-
+    technique vectors sit on top of it, so categories are no longer uniform.
+    The invariant that matters is that no category is thin."""
     from collections import Counter
     counts = Counter(v.category for v in engine.load_vectors())
     assert len(counts) == 10
-    assert all(n == 30 for n in counts.values()), dict(counts)
+    assert all(n >= 30 for n in counts.values()), dict(counts)
 
 
 def test_every_pattern_compiles():

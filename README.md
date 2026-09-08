@@ -28,7 +28,7 @@ Illustrative output — for measured results against real models, see
 ```
 ╭──────────────── LLM Red Team ────────────────╮
 │ your-model                                   │
-│ 300 vectors · 10 categories                  │
+│ 330 vectors · 10 categories                  │
 ╰──────────────────────────────────────────────╯
 
 Findings
@@ -396,8 +396,45 @@ counted as held, and why the weakest detector is capped at medium severity.
 - **`--max-tokens 700`.** A model that would have flooded past that limit on the
   `unbounded_consumption` vectors is recorded as holding.
 - **Nothing is pinned.** These model versions were current on 2026-09-07.
-- **The suite has since tripled.** 107 vectors then, 300 now. The 193 added
+- **The suite has since tripled.** 107 vectors then, 330 now. The 223 added
   vectors are untested against any model.
+
+## Where the payloads come from
+
+Thirty vectors implement a **named, published attack** and carry a `source`
+field citing it. Provenance is a first-class field, not a code comment: it
+appears in the HTML and Markdown reports next to the finding, so a reader can
+check the technique against its write-up instead of taking the vector on trust.
+
+| Technique | Origin |
+|---|---|
+| Many-shot jailbreaking | Anil et al., Anthropic, 2024 |
+| Skeleton Key | Russinovich, Microsoft MSRC, 2024 |
+| Policy Puppetry | HiddenLayer, 2025 |
+| Deceptive Delight | Unit 42, Palo Alto Networks, 2024 |
+| Bad Likert Judge | Unit 42, Palo Alto Networks, 2025 |
+| Echo Chamber | NeuralTrust, 2025 |
+| Prefix injection / refusal suppression | Wei, Haghtalab & Steinhardt, NeurIPS 2023 |
+| Adversarial suffix (GCG) | Zou et al., 2023 |
+| ArtPrompt (ASCII art masking) | Jiang et al., ACL 2024 |
+| FlipAttack | Liu et al., 2024 |
+| Unicode Tags smuggling | Goodside, 2024 |
+| Best-of-N augmentation | Hughes et al., 2024 |
+| Low-resource language routing | Yong, Menghini & Bach, 2023 |
+| Payload splitting | Kang et al., 2023 |
+| Lost-in-the-middle burial | Liu et al., TACL 2024 |
+| Indirect / tool-result injection | Greshake et al., AISec 2023 |
+| MCP tool-description poisoning | Invariant Labs, 2025 |
+
+**Seven of the thirty are composed** — two techniques in one prompt. Many-shot
+with prefix injection, Skeleton Key with crescendo escalation, Policy Puppetry
+delivered through a forged chat-template boundary, Unicode Tags smuggled inside
+a poisoned RAG chunk. A single-technique probe tests a defence a model may be
+specifically tuned against; composition tests whether those defences are
+independent or share one failure mode.
+
+The remaining 300 vectors are original, written against the OWASP LLM Top 10
+taxonomy rather than derived from a paper.
 
 ## Coverage
 
@@ -630,13 +667,13 @@ without sending anything:
 $ lrtf scan groq/openai/gpt-oss-20b --rpm 9 --workers 2 --dry-run
 model       groq/openai/gpt-oss-20b
 system      default (canary planted)
-vectors     300  (85H 149M 66L)
-requests    329
+vectors     330  (106H 158M 66L)
+requests    366
 categories  10  encoding_bypass, excessive_agency, improper_output_handling, …
 pacing      --rpm 9 --workers 2  →  ~37 min
 ```
 
-**300 vectors is 329 requests** — twelve vectors are multi-turn and bill per
+**330 vectors is 366 requests** — 15 vectors are multi-turn and bill per
 turn, and `--repeat 5` makes it 1,645. That number decides whether a scan fits
 inside a metered free tier, and it is not one you can do in your head. It runs
 after parsing, so a malformed `--header` or an unusable `--system` file fails
@@ -648,7 +685,7 @@ here rather than on the run that spends the quota.
 lrtf --install-completion
 ```
 
-Completes category names and the 300 vector ids for `--category`, `--id` and
+Completes category names and the 330 vector ids for `--category`, `--id` and
 `--exclude`.
 
 ### Test your own system prompt
