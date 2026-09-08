@@ -4,6 +4,7 @@ import json
 import time
 
 import pytest
+from conftest import flat
 from typer.testing import CliRunner
 
 from lrtf import engine
@@ -32,7 +33,7 @@ def test_unknown_id_is_an_error_not_an_empty_scan():
 def test_cli_rejects_an_unknown_id():
     r = runner.invoke(app, ["scan", "m", "--id", "nope-999"])
     assert r.exit_code == 2
-    assert "no such vector" in r.output
+    assert "no such vector" in flat(r.output)
 
 
 def test_exclude_drops_a_category():
@@ -126,7 +127,7 @@ def test_provider_options_reach_the_call(monkeypatch, flag, key, value):
                         lambda *a, **k: (seen.update(k), HELD)[1])
     r = runner.invoke(app, ["scan", "m", "--id", "jb-003", flag, str(value),
                             "--fail-on", "never"])
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == 0, flat(r.output)
     assert seen[key] == value
 
 
@@ -136,14 +137,14 @@ def test_headers_are_parsed_into_a_dict(monkeypatch):
                         lambda *a, **k: (seen.update(k), HELD)[1])
     r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "--fail-on", "never",
                             "-H", "X-Tenant: acme", "-H", "X-Trace: 99"])
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == 0, flat(r.output)
     assert seen["extra_headers"] == {"X-Tenant": "acme", "X-Trace": "99"}
 
 
 def test_malformed_header_is_rejected():
     r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "-H", "nocolon"])
     assert r.exit_code == 2
-    assert "Name: value" in r.output
+    assert "Name: value" in flat(r.output)
 
 
 # --- canary ----------------------------------------------------------------
@@ -163,8 +164,8 @@ def test_quiet_prints_one_line(monkeypatch):
     monkeypatch.setattr(engine, "probe", lambda *a, **k: HELD)
     r = runner.invoke(app, ["scan", "m", "-c", "jailbreak", "-q", "--fail-on", "never"])
     assert r.exit_code == 0
-    assert len([l for l in r.output.strip().splitlines() if l.strip()]) == 1
-    assert "PASS" in r.output
+    assert len([l for l in flat(r.output).strip().splitlines() if l.strip()]) == 1
+    assert "PASS" in flat(r.output)
 
 
 def test_quiet_still_gates(monkeypatch):
@@ -208,7 +209,7 @@ def test_resume_only_reruns_what_did_not_complete(tmp_path, monkeypatch):
     final = tmp_path / "final.json"
     r = runner.invoke(app, ["scan", "m", "-c", "misinformation", "--resume", str(out),
                             "--json", str(final), "--fail-on", "never"])
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == 0, flat(r.output)
     assert calls["n"] == errored, "re-ran vectors that had already completed"
 
     merged = json.loads(final.read_text())

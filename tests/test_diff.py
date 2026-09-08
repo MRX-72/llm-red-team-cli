@@ -4,6 +4,7 @@ calling an errored vector fixed -- would make it worse than useless."""
 import json
 
 import pytest
+from conftest import flat
 from typer.testing import CliRunner
 
 from lrtf.cli import app
@@ -41,8 +42,8 @@ def test_fixed_and_regressed_are_named(tmp_path):
     a = report(tmp_path, "a.json", [finding("v1", True), finding("v2", False)])
     b = report(tmp_path, "b.json", [finding("v1", False), finding("v2", True)])
     r = run(a, b)
-    assert "FIXED" in r.output and "v1" in r.output
-    assert "REGRESSED" in r.output and "v2" in r.output
+    assert "FIXED" in flat(r.output) and "v1" in flat(r.output)
+    assert "REGRESSED" in flat(r.output) and "v2" in flat(r.output)
 
 
 def test_regression_exits_nonzero(tmp_path):
@@ -57,7 +58,7 @@ def test_pure_improvement_exits_zero(tmp_path):
     b = report(tmp_path, "b.json", [finding("v1", False)])
     r = run(a, b)
     assert r.exit_code == 0
-    assert "FIXED" in r.output
+    assert "FIXED" in flat(r.output)
 
 
 def test_identical_reports_report_no_change(tmp_path):
@@ -65,7 +66,7 @@ def test_identical_reports_report_no_change(tmp_path):
     b = report(tmp_path, "b.json", [finding("v1", False)])
     r = run(a, b)
     assert r.exit_code == 0
-    assert "No change" in r.output
+    assert "No change" in flat(r.output)
 
 
 def test_an_errored_vector_is_never_called_fixed(tmp_path):
@@ -74,15 +75,15 @@ def test_an_errored_vector_is_never_called_fixed(tmp_path):
     a = report(tmp_path, "a.json", [finding("v1", True)])
     b = report(tmp_path, "b.json", [finding("v1", False, error="RateLimitError: 429")])
     r = run(a, b)
-    assert "FIXED" not in r.output
-    assert "UNTESTED" in r.output
+    assert "FIXED" not in flat(r.output)
+    assert "UNTESTED" in flat(r.output)
 
 
 def test_still_failing_is_distinguished_from_regressed(tmp_path):
     a = report(tmp_path, "a.json", [finding("v1", True)])
     b = report(tmp_path, "b.json", [finding("v1", True)])
     r = run(a, b)
-    assert "STILL FAILING" in r.output
+    assert "STILL FAILING" in flat(r.output)
     assert r.exit_code == 0          # not new, so not a regression
 
 
@@ -90,7 +91,7 @@ def test_new_vector_in_suite_shows_as_added(tmp_path):
     a = report(tmp_path, "a.json", [finding("v1", False)])
     b = report(tmp_path, "b.json", [finding("v1", False), finding("v2", True)])
     r = run(a, b)
-    assert "ADDED" in r.output and "v2" in r.output
+    assert "ADDED" in flat(r.output) and "v2" in flat(r.output)
     assert r.exit_code == 1          # a newly-failing vector still gates CI
 
 
@@ -98,4 +99,4 @@ def test_removed_vector_shows_as_dropped(tmp_path):
     a = report(tmp_path, "a.json", [finding("v1", True), finding("v2", True)])
     b = report(tmp_path, "b.json", [finding("v1", True)])
     r = run(a, b)
-    assert "DROPPED" in r.output
+    assert "DROPPED" in flat(r.output)
