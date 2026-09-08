@@ -167,9 +167,11 @@ def scan(
             console.print(f"[red]{exc}[/]")
             raise typer.Exit(2)
         if unbuffable and not quiet:
-            console.print(f"[dim]{unbuffable} vectors skipped: the `absent` "
-                          f"detector reports a missing hedge, so a rewritten "
-                          f"prompt would manufacture findings[/]")
+            # Say what was not tested. A combination dropped in silence looks
+            # exactly like one that ran and held.
+            detail = ", ".join(f"{n} {why}" for why, n in unbuffable.items())
+            console.print(f"[dim]{sum(unbuffable.values())} vector×buff "
+                          f"combinations skipped ({detail})[/]")
     if sample_n:
         vectors = engine.sample(vectors, sample_n, seed)
     if not vectors:
