@@ -345,3 +345,77 @@ def test_completion_never_raises(monkeypatch):
                         lambda *a, **kw: (_ for _ in ()).throw(OSError("boom")))
     assert cli._complete_category("x") == []
     assert cli._complete_id("x") == []
+
+
+# --- --baseline ------------------------------------------------------------
+
+def _leak(monkeypatch, canary="ACME-B1"):
+    """Make every vector leak, so the gate has something to act on."""
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: f"sure: {canary}")
+
+
+def test_baseline_accepts_known_findings_but_still_reports_them(tmp_path, monkeypatch):
+    """A scanner that goes red on day one gets commented out of the pipeline.
+    The finding still has to appear in the report -- accepted is not hidden."""
+    _leak(monkeypatch)
+    base = tmp_path / "baseline.json"
+    r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "--canary", "ACME-B1",
+                            "--json", str(base)])
+    assert r.exit_code == 1                      # first run: red, as it should be
+
+    r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "--canary", "ACME-B1",
+                            "--baseline", str(base)])
+    assert r.exit_code == 0
+    out = flat(r.output)
+    assert "1 accepted, 0 new" in out
+    assert "jb-003" in out                       # reported, just not gating
+
+
+def test_baseline_does_not_suppress_a_new_finding(tmp_path, monkeypatch):
+    _leak(monkeypatch)
+    base = tmp_path / "baseline.json"
+    runner.invoke(app, ["scan", "m", "--id", "jb-003", "--canary", "ACME-B1",
+                        "--json", str(base), "--fail-on", "never"])
+
+    r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "--id", "pi-001",
+                            "--canary", "ACME-B1", "--baseline", str(base)])
+    assert r.exit_code == 1, flat(r.output)
+    assert "1 accepted, 1 new" in flat(r.output)
+
+
+def test_baseline_flags_entries_that_no_longer_fail(tmp_path, monkeypatch):
+    """Silently carrying dead entries is how a baseline rots into a blanket
+    exemption."""
+    _leak(monkeypatch)
+    base = tmp_path / "baseline.json"
+    runner.invoke(app, ["scan", "m", "--id", "jb-003", "--id", "pi-001",
+                        "--canary", "ACME-B1", "--json", str(base),
+                        "--fail-on", "never"])
+
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: HELD)   # fixed
+    r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "--id", "pi-001",
+                            "--canary", "ACME-B1", "--baseline", str(base)])
+    assert r.exit_code == 0
+    out = flat(r.output)
+    assert "2 baseline entries no longer fail" in out
+    assert "jb-003" in out and "pi-001" in out
+
+
+def test_baseline_is_just_a_report(tmp_path, monkeypatch):
+    """No new file format: the baseline is a --json report you committed, so
+    verify and diff already work on it."""
+    _leak(monkeypatch)
+    base = tmp_path / "baseline.json"
+    runner.invoke(app, ["scan", "m", "--id", "jb-003", "--canary", "ACME-B1",
+                        "--json", str(base), "--fail-on", "never"])
+    assert runner.invoke(app, ["verify", str(base)]).exit_code == 0
+    assert runner.invoke(app, ["diff", str(base), str(base)]).exit_code == 0
+
+
+def test_baseline_rejects_a_file_that_is_not_a_report(tmp_path, monkeypatch):
+    _leak(monkeypatch)
+    bad = tmp_path / "nope.json"
+    bad.write_text('{"hello": 1}')
+    r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "--baseline", str(bad)])
+    assert r.exit_code == 2
+    assert "is it an lrtf report" in flat(r.output)

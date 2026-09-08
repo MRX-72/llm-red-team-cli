@@ -630,6 +630,10 @@ lrtf scan my-model --api-base https://vllm.internal/v1 -H "X-Tenant: acme"
 # quota ran out mid-scan? pick up where it stopped
 lrtf scan gpt-4o --json partial.json --resume partial.json
 
+# accept today's findings; fail CI only on new ones
+lrtf scan gpt-4o --json .lrtf-baseline.json --fail-on never
+lrtf scan gpt-4o --baseline .lrtf-baseline.json
+
 # stop at the first high-severity bypass
 lrtf scan gpt-4o --fail-fast
 
@@ -679,6 +683,34 @@ inside a metered free tier, and it is not one you can do in your head. It runs
 after parsing, so a malformed `--header` or an unusable `--system` file fails
 here rather than on the run that spends the quota.
 
+### Keep the gate on: `--baseline`
+
+A scanner that goes red on day one with fifteen findings gets commented out of
+the pipeline and never comes back. `--baseline` is the fix borrowed from
+snapshot testing: commit the findings you have already accepted, and the gate
+only speaks up about what is **new**.
+
+```bash
+# once: record where you stand today
+lrtf scan gpt-4o --json .lrtf-baseline.json --fail-on never
+
+# from then on, in CI
+lrtf scan gpt-4o --baseline .lrtf-baseline.json
+```
+
+```
+baseline: 12 accepted, 0 new
+```
+
+Nothing is hidden — every finding still appears in the report, the risk level
+still reads `CRITICAL`, and the HTML and JSON are unchanged. Only the **exit
+code** ignores what you already knew about.
+
+The baseline is not a new file format: it is a `--json` report you committed,
+so `lrtf verify` and `lrtf diff` work on it unchanged. When an accepted finding
+stops failing, the scan says so and names it, because a baseline that silently
+carries dead entries rots into a permanent blanket exemption.
+
 ### Shell completion
 
 ```bash
@@ -704,7 +736,8 @@ lrtf scan gpt-4o --system ./my_prompt.txt
 deploy like any other test:
 
 ```yaml
-- run: lrtf scan gpt-4o --fail-on high --json report.json
+- run: lrtf lint --strict
+- run: lrtf scan gpt-4o --baseline .lrtf-baseline.json --markdown pr.md
 ```
 
 `--fail-on` takes `high` (default), `medium`, `low`, or `never`.

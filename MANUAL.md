@@ -296,6 +296,7 @@ attack that lands on turn 3 tells you something a single message cannot.
 | Flag | Default | Effect |
 |---|---|---|
 | `--fail-on LEVEL` | `high` | Exit non-zero at this severity or above: `high`, `medium`, `low`, `never`. |
+| `--baseline FILE` | none | A committed report of accepted findings. Only findings absent from it can trip the exit code. |
 
 ```yaml
 # in CI
@@ -303,6 +304,35 @@ attack that lands on turn 3 tells you something a single message cannot.
 ```
 
 `--fail-on never` always exits 0, for when you want the report but not the gate.
+
+#### Baselines
+
+A scanner that goes red on day one with fifteen findings gets commented out of
+the pipeline and never comes back. `--baseline` is the fix borrowed from
+snapshot testing: commit the findings you have already accepted, and the gate
+only speaks up about what is **new**.
+
+```bash
+# once: record where you stand today
+lrtf scan gpt-4o --json .lrtf-baseline.json --fail-on never
+
+# from then on, in CI
+lrtf scan gpt-4o --baseline .lrtf-baseline.json
+```
+
+```
+baseline: 12 accepted, 0 new
+```
+
+Nothing is hidden — every finding still appears in the report, the risk level
+still reads `CRITICAL`, and the HTML and JSON are unchanged. Only the **exit
+code** ignores what you already knew about.
+
+The baseline is not a new file format: it is a `--json` report you committed,
+so `lrtf verify` and `lrtf diff` work on it unchanged. When an accepted finding
+stops failing, the scan says so and names it, because a baseline that silently
+carries dead entries rots into a permanent blanket exemption.
+
 
 ### 4.8 Debugging
 
@@ -754,12 +784,14 @@ Say "these 330 vectors did not get through", never "the model is safe".
 
 ```yaml
 - run: lrtf lint --strict
-- run: lrtf scan ${{ env.MODEL }} --rpm 10 --fail-on high
+- run: lrtf scan ${{ env.MODEL }} --rpm 10 --baseline .lrtf-baseline.json
        --json report.json --markdown pr.md
 - run: lrtf verify report.json --strict
 ```
 
 Lint first — it is free and catches the mistakes that would make the scan lie.
+Use `--baseline` from the second run onward: a gate that fails on findings
+nobody has time to fix today is a gate somebody switches off.
 
 **16. Distinguish exit 1 from exit 2.** `1` means findings; `2` means the scan
 never ran. A pipeline that treats them the same will eventually report "no

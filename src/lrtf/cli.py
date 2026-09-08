@@ -142,6 +142,7 @@ def scan(
     html_out: Optional[pathlib.Path] = typer.Option(None, "--html", help="Write a self-contained HTML report here."),
     md_out: Optional[pathlib.Path] = typer.Option(None, "--markdown", help="Write a report sized for a PR comment here."),
     fail_on: str = typer.Option("high", "--fail-on", help="Exit non-zero at this severity or above: high|medium|low|never."),
+    baseline: Optional[pathlib.Path] = typer.Option(None, "--baseline", help="A committed report of accepted findings. Everything is still reported; only findings absent from it can trip the exit code."),
     show_responses: bool = typer.Option(False, "--show-responses", help="Print the model reply for each finding."),
     tui: bool = typer.Option(False, "--tui", help="Live view: watch each vector land as it completes."),
 ):
@@ -259,7 +260,30 @@ def scan(
     if fail_on not in thresholds:
         console.print(f"[red]--fail-on must be one of {list(thresholds)}[/]")
         raise typer.Exit(2)
-    if any(report["by_severity"].get(s) for s in thresholds[fail_on]):
+
+    gating = [f for f in report["findings"] if f["vulnerable"]]
+    if baseline:
+        # A scanner that goes red on day one with fifteen findings gets
+        # commented out of the pipeline and never comes back. Accepting the
+        # known set means the gate can stay on and only speak up about what is
+        # new -- which is the only thing anyone can act on today.
+        known = {f["vector"]["id"] for f in _load_report(baseline)["findings"]
+                 if f["vulnerable"]}
+        gating = [f for f in gating if f["vector"]["id"] not in known]
+        stale = known - {f["vector"]["id"] for f in report["findings"]
+                         if f["vulnerable"]}
+        if not quiet:
+            suppressed = report["vulnerable"] - len(gating)
+            console.print(f"\n[dim]baseline: {suppressed} accepted, "
+                          f"{len(gating)} new[/]")
+            if stale:
+                # Silently carrying entries that no longer fail is how a
+                # baseline rots into a permanent blanket exemption.
+                console.print(f"[dim]{len(stale)} baseline entries no longer "
+                              f"fail — prune them: {', '.join(sorted(stale)[:5])}"
+                              f"{'…' if len(stale) > 5 else ''}[/]")
+
+    if any(f["vector"]["severity"] in thresholds[fail_on] for f in gating):
         raise typer.Exit(1)
 
 
