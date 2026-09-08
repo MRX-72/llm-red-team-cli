@@ -28,7 +28,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .engine import DETECTORS, SEVERITY_ORDER, Vector, _flat, evaluate, new_canary
+from .engine import (DETECTORS, NEEDS_MATCH, SEVERITY_ORDER, Vector, _flat,
+                     evaluate, new_canary)
 
 # Three corpora, because "refusal" is not one thing.
 #
@@ -158,7 +159,7 @@ def _shape_issues(v: Vector) -> list[Issue]:
                          "characters as \\U0001XXXX, not a \\udXXX pair"))
     if v.severity not in SEVERITY_ORDER:
         out.append(Issue("error", "E009", v.id, f"unknown severity {v.severity!r}"))
-    if v.detect != "canary" and not v.match:
+    if v.detect in NEEDS_MATCH and not v.match:
         out.append(Issue("error", "E010", v.id, f"{v.detect} needs a match value"))
     return out
 
