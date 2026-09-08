@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 from typing import Optional
 
 import typer
@@ -209,7 +210,8 @@ def scan(
                             f"{len({v.category for v in vectors})} categories{extra}",
                             title="LLM Red Team", border_style="blue"))
 
-    kw = dict(system=custom, workers=workers, rpm=rpm, repeat=repeat,
+    pacing: dict = {}
+    kw = dict(system=custom, workers=workers, rpm=rpm, repeat=repeat, pacing=pacing,
               temperature=temperature, fail_fast=fail_fast, canary=canary)
     if max_tokens:
         kw["max_tokens"] = max_tokens
@@ -253,6 +255,8 @@ def scan(
                                      r.vector.id))
     report = engine.summarise(results_, model, canary,
                               requested=len(resumed) + len(vectors))
+    if pacing.get("backoffs"):
+        report["pacing"] = pacing
     if quiet:
         s = report["by_severity"]
         console.print(f"{report['risk']}  {report['vulnerable']}/{report['total']} "
@@ -661,6 +665,29 @@ def diff(
         raise typer.Exit(1)
 
 
+def _cause(error: str) -> str:
+    """Collapse a provider error to the part that repeats.
+
+    Provider messages embed request ids, timestamps and echoed prompts, so
+    grouping on the raw string gives one group per error. Keep the exception
+    type and the first clause of the message; that is what two failures with
+    the same cause actually share.
+    """
+    kind, _, rest = error.partition(":")
+    for pattern in (
+        r"\b[0-9a-f]{8,}-[0-9a-f-]{8,}\b",   # uuid
+        r"\b\w{2,6}_[A-Za-z0-9]{8,}\b",      # req_01j8f3…, trace_…, sk_…
+        r"\b[0-9a-f]{12,}\b",                # bare hex id
+        r"\b\d{9,}\b",                       # epoch timestamp
+    ):
+        # Deliberately narrow. A looser "long alphanumeric token" rule also
+        # eats model names like gpt-4o-mini, and grouping errors by a
+        # redacted model name is worse than not grouping them.
+        rest = re.sub(pattern, "…", rest)
+    rest = re.sub(r"\s+", " ", rest).strip(" -{\"'")
+    return f"{kind}: {rest[:90]}" if rest else kind
+
+
 def _render(report: dict, show_responses: bool) -> None:
     findings = [f for f in report["findings"] if f["vulnerable"]]
     errors = [f for f in report["findings"] if f["error"]]
@@ -709,8 +736,12 @@ def _render(report: dict, show_responses: bool) -> None:
         f"[{RISK_COLOR.get(report['risk'],'white')}] {report['risk']} [/]   "
         f"{report['vulnerable']}/{report['total']} vectors succeeded"
         f"   ([red]{s['high']} high[/] · [yellow]{s['medium']} medium[/] · [cyan]{s['low']} low[/])"
+        # The static --rpm hint is a guess; when the scan actually measured a
+        # working rate, that line says it instead.
         + (f"\n[yellow]{len(errors)} of {report['total']} vectors errored — this is not a clean result.[/]"
-           f"\n[dim]On a free tier, retry with --rpm 10.[/]" if errors else "")
+           + ("" if report.get("pacing")
+              else "\n[dim]On a free tier, retry with --rpm 10.[/]")
+           if errors else "")
         + (f"\n[yellow]{report['blank']} vectors returned an empty response — not counted as held.[/]"
            if report.get("blank") else "")
         + (f"\n[yellow]stopped early: {report['skipped']} vectors were never run.[/]"
@@ -718,8 +749,39 @@ def _render(report: dict, show_responses: bool) -> None:
         border_style=RISK_COLOR.get(report["risk"], "white").split()[-1],
         title="Risk"))
 
+    pacing = report.get("pacing")
+    if pacing:
+        if pacing["gave_up"]:
+            console.print(
+                f"\n[red]Pacing gave up:[/] the provider rate-limited "
+                f"{engine.Throttle.GIVE_UP_AFTER} requests in a row with no "
+                f"success between them. That is a spent quota, not a busy "
+                f"endpoint — waiting longer would not have helped.")
+        console.print(
+            f"[dim]pacing: backed off {pacing['backoffs']}× · settled at "
+            f"~{pacing['effective_rpm']} rpm"
+            + (f" (asked for {pacing['requested_rpm']})"
+               if pacing["requested_rpm"] else " (started unpaced)")
+            + f" — try [/][cyan]--rpm {max(1, int(pacing['effective_rpm']))}[/]"
+              f"[dim] next time[/]")
+
     if errors:
-        console.print(f"[yellow]first error:[/] {errors[0]['error'][:200]}")
+        # One error line hid the shape of a failed scan: 40 vectors down to
+        # three distinct causes read as a single anecdote. Group them, so the
+        # one that actually matters is not buried behind whichever finished
+        # first.
+        from collections import Counter
+        causes = Counter(_cause(e["error"]) for e in errors)
+        table = Table(box=None, pad_edge=False, title="Errors",
+                      title_style="yellow", title_justify="left")
+        table.add_column("N", style="yellow", justify="right")
+        table.add_column("CAUSE")
+        for cause, n in causes.most_common(6):
+            table.add_row(str(n), cause)
+        console.print()
+        console.print(table)
+        if len(causes) > 6:
+            console.print(f"[dim]…and {len(causes) - 6} more[/]")
 
     if show_responses:
         for f in findings:

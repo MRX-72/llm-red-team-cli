@@ -62,13 +62,15 @@ def test_never_leaking_reports_zero_hits(monkeypatch):
 
 
 def test_a_clean_run_outweighs_an_errored_one(monkeypatch):
-    """One 429 among three attempts must not make the vector look untested."""
+    """One failed attempt among three must not make the vector look untested."""
     calls = {"n": 0}
 
     def flaky(*a, **k):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise RuntimeError("429 rate limit")
+            # Not a 429: rate limits are retried through the throttle now,
+            # so one would recover and this test would have no error to count.
+            raise RuntimeError("AuthenticationError: invalid key")
         return "I can't share that."
 
     monkeypatch.setattr(engine, "probe", flaky)
@@ -272,3 +274,78 @@ def test_source_reaches_the_reports():
         [engine.Result(v, True, "ACME-1", evidence="ACME-1")], "m", "ACME-1")
     assert "Skeleton Key" in report_mod.render(rep)
     assert "Skeleton Key" in report_mod.markdown(rep)
+
+
+# --- error grouping and pacing feedback ------------------------------------
+
+def _noisy(monkeypatch, sleepless=True):
+    n = {"i": 0}
+
+    def flaky(*a, **k):
+        n["i"] += 1
+        if n["i"] % 3 == 0:      # same cause, different request id each time
+            raise RuntimeError("RateLimitError: 429 rate limit reached "
+                               f"req_{n['i']:08x}")
+        if n["i"] % 7 == 0:
+            raise RuntimeError("BadRequestError: Tool choice is none, but "
+                               "model called a tool")
+        return "I'm sorry, I can't help with that."
+
+    monkeypatch.setattr(engine, "probe", flaky)
+    if sleepless:
+        monkeypatch.setattr(engine.time, "sleep", lambda s: None)
+
+
+def test_errors_are_grouped_by_cause_not_reported_one_at_a_time(monkeypatch):
+    """40 errors down to three causes read as a single anecdote when only the
+    first was printed."""
+    _noisy(monkeypatch)
+    r = runner.invoke(app, ["scan", "m", "-c", "pii_leakage", "-w", "1",
+                            "--fail-on", "never"])
+    out = flat(r.output)
+    assert "Errors" in out
+    assert "Tool choice is none" in out          # the cause behind the 429s
+
+
+def test_request_ids_do_not_split_one_cause_into_many_groups():
+    from lrtf.cli import _cause
+    assert (_cause("RateLimitError: rate limit reached req_01j8f3a9b2c1")
+            == _cause("RateLimitError: rate limit reached req_99aa77bb44cc"))
+    assert (_cause("X: trace 550e8400-e29b-41d4-a716-446655440000 failed")
+            == _cause("X: trace 6ba7b810-9dad-11d1-80b4-00c04fd430c8 failed"))
+
+
+def test_grouping_does_not_redact_the_model_name():
+    """A looser id rule also eats gpt-4o-mini, and grouping errors under a
+    redacted model name is worse than not grouping them."""
+    from lrtf.cli import _cause
+    assert "gpt-4o-mini" in _cause("APIError: no access to gpt-4o-mini")
+
+
+def test_the_scan_reports_the_rate_that_actually_worked(monkeypatch):
+    """--rpm is the user's guess at a documented limit. After a scan the tool
+    knows better, so it says so rather than leaving them to guess again."""
+    _noisy(monkeypatch)
+    r = runner.invoke(app, ["scan", "m", "-c", "pii_leakage", "--rpm", "60",
+                            "-w", "1", "--fail-on", "never"])
+    out = flat(r.output)
+    assert "backed off" in out and "--rpm" in out
+
+
+def test_pacing_lands_in_the_json_report(tmp_path, monkeypatch):
+    _noisy(monkeypatch)
+    out = tmp_path / "r.json"
+    runner.invoke(app, ["scan", "m", "-c", "pii_leakage", "--rpm", "60", "-w", "1",
+                        "--json", str(out), "--fail-on", "never"])
+    pacing = json.loads(out.read_text())["pacing"]
+    assert pacing["backoffs"] > 0
+    assert pacing["requested_rpm"] == 60
+    assert pacing["effective_rpm"] <= 60          # never faster than requested
+
+
+def test_the_static_rpm_hint_yields_to_the_measured_one(monkeypatch):
+    """Two contradictory suggestions is worse than one."""
+    _noisy(monkeypatch)
+    r = runner.invoke(app, ["scan", "m", "-c", "pii_leakage", "-w", "1",
+                            "--fail-on", "never"])
+    assert "retry with --rpm 10" not in flat(r.output)
