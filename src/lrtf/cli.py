@@ -37,8 +37,31 @@ def _load_report(path: pathlib.Path) -> dict:
     return data
 
 
+def _suite() -> list:
+    """Vectors for shell completion. Best effort: completion must never raise,
+    and it cannot see a --vectors directory typed later on the same line."""
+    try:
+        return engine.load_vectors()
+    except Exception:
+        return []
+
+
+def _complete_category(incomplete: str) -> list[str]:
+    return sorted({v.category for v in _suite()
+                   if v.category.startswith(incomplete)})
+
+
+def _complete_id(incomplete: str) -> list[str]:
+    return [v.id for v in _suite() if v.id.startswith(incomplete)]
+
+
+def _complete_target(incomplete: str) -> list[str]:
+    """--exclude takes either, so offer both."""
+    return _complete_category(incomplete) + _complete_id(incomplete)
+
+
 app = typer.Typer(
-    add_completion=False,
+    add_completion=True,
     help="Adversarial test harness for LLM applications.",
     no_args_is_help=True,
 )
@@ -50,13 +73,50 @@ RISK_COLOR = {"CRITICAL": "bold white on red", "HIGH": "bold red",
               "INCOMPLETE": "bold yellow"}
 
 
+def _dry_run(model, vectors, repeat, rpm, workers, system, resumed: int) -> None:
+    """What the run would cost, without spending it.
+
+    The request count is not the vector count -- multi-turn vectors bill per
+    turn, and --repeat multiplies everything. Guessing wrong on a metered free
+    tier burns the day's quota before the first finding.
+    """
+    requests = sum(len(v.messages) for v in vectors) * repeat
+    cats = sorted({v.category for v in vectors})
+    sev = {s: sum(v.severity == s for v in vectors) for s in ("high", "medium", "low")}
+
+    rows = [
+        ("model", model),
+        ("system", str(system) if system else "default (canary planted)"),
+        ("vectors", f"{len(vectors)}  ({sev['high']}H {sev['medium']}M {sev['low']}L)"
+                    + (f", {resumed} already done" if resumed else "")),
+        ("requests", f"{requests}" + (f"  ({repeat}x)" if repeat > 1 else "")),
+        ("categories", f"{len(cats)}  " + ", ".join(cats)),
+    ]
+    if rpm:
+        # The throttle paces globally, so rpm is the binding constraint and the
+        # estimate is a floor: it ignores latency past the gap and any retry.
+        mins = requests / rpm
+        eta = f"{mins:.0f} min" if mins >= 1 else f"{mins * 60:.0f}s"
+        rows.append(("pacing", f"--rpm {rpm} --workers {workers}  →  ~{eta}"))
+    else:
+        rows.append(("pacing", f"--workers {workers}, unthrottled"))
+
+    t = Table.grid(padding=(0, 2))
+    t.add_column(style="dim")
+    t.add_column()
+    for k, v in rows:
+        t.add_row(k, v)
+    console.print(Panel(t, title="dry run — nothing sent", title_align="left",
+                        border_style="blue"))
+
+
 @app.command()
 def scan(
     model: str = typer.Argument(..., help="Target model, litellm syntax. e.g. gpt-4o, anthropic/claude-sonnet-4-5, ollama/llama3"),
-    category: Optional[list[str]] = typer.Option(None, "--category", "-c", help="Limit to categories (repeatable)."),
+    category: Optional[list[str]] = typer.Option(None, "--category", "-c", help="Limit to categories (repeatable).", autocompletion=_complete_category),
     severity: Optional[list[str]] = typer.Option(None, "--severity", "-s", help="Limit to severities (repeatable)."),
-    ids: Optional[list[str]] = typer.Option(None, "--id", "-i", help="Run only these vector ids (repeatable)."),
-    exclude: Optional[list[str]] = typer.Option(None, "--exclude", "-x", help="Skip these categories or ids (repeatable)."),
+    ids: Optional[list[str]] = typer.Option(None, "--id", "-i", help="Run only these vector ids (repeatable).", autocompletion=_complete_id),
+    exclude: Optional[list[str]] = typer.Option(None, "--exclude", "-x", help="Skip these categories or ids (repeatable).", autocompletion=_complete_target),
     sample_n: Optional[int] = typer.Option(None, "--sample", help="Run a random subset of this size, stratified by category."),
     seed: Optional[int] = typer.Option(None, "--seed", help="Make --sample reproducible."),
     system: Optional[pathlib.Path] = typer.Option(None, "--system", help="File holding your own system prompt. Must contain {canary}."),
@@ -76,6 +136,7 @@ def scan(
     header: Optional[list[str]] = typer.Option(None, "--header", "-H", help="Extra request header as 'Name: value' (repeatable)."),
     resume: Optional[pathlib.Path] = typer.Option(None, "--resume", help="Continue a partial scan: vectors already completed in this report are not re-run."),
     fail_fast: bool = typer.Option(False, "--fail-fast", help="Stop as soon as a high-severity vector gets through."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run — vectors, requests, pacing — and stop without sending anything."),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Print only the verdict line. Exit code still gates."),
     json_out: Optional[pathlib.Path] = typer.Option(None, "--json", help="Write the full report here."),
     html_out: Optional[pathlib.Path] = typer.Option(None, "--html", help="Write a self-contained HTML report here."),
@@ -124,7 +185,7 @@ def scan(
     requests = sum(len(v.messages) for v in vectors) * repeat
     extra = f" · {requests} requests" if requests != len(vectors) else ""
     extra += f" · {repeat}x each" if repeat > 1 else ""
-    if not quiet:
+    if not quiet and not dry_run:   # the dry-run panel supersedes it
         console.print(Panel(f"[bold]{model}[/]\n{len(vectors)} vectors · "
                             f"{len({v.category for v in vectors})} categories{extra}",
                             title="LLM Red Team", border_style="blue"))
@@ -147,6 +208,13 @@ def scan(
         except ValueError:
             console.print("[red]--header must be 'Name: value'[/]")
             raise typer.Exit(2)
+    if dry_run:
+        # Sited after every option is parsed and validated, so a bad --header or
+        # an unusable --system file still fails here rather than only on the run
+        # that spends the quota.
+        _dry_run(model, vectors, repeat, rpm, workers, system, len(resumed))
+        raise typer.Exit(0)
+
     if quiet:
         results_, canary = engine.run_scan(model, vectors, **kw)
     elif tui:
@@ -197,7 +265,7 @@ def scan(
 
 @app.command()
 def vectors(
-    category: Optional[list[str]] = typer.Option(None, "--category", "-c"),
+    category: Optional[list[str]] = typer.Option(None, "--category", "-c", autocompletion=_complete_category),
     vectors_dir: Optional[list[pathlib.Path]] = typer.Option(
         None, "--vectors", help="List vectors from these directories instead of the built-in suite."),
 ):
@@ -283,7 +351,7 @@ class LiveScan:
 @app.command()
 def compare(
     models: list[str] = typer.Argument(..., help="Two or more models to scan with the same suite."),
-    category: Optional[list[str]] = typer.Option(None, "--category", "-c"),
+    category: Optional[list[str]] = typer.Option(None, "--category", "-c", autocompletion=_complete_category),
     severity: Optional[list[str]] = typer.Option(None, "--severity", "-s"),
     system: Optional[pathlib.Path] = typer.Option(None, "--system", help="Your own system prompt. Must contain {canary}."),
     vectors_dir: Optional[list[pathlib.Path]] = typer.Option(None, "--vectors"),
@@ -439,7 +507,7 @@ def verify(
 @app.command()
 def lint(
     vectors_dir: Optional[list[pathlib.Path]] = typer.Option(None, "--vectors", help="Lint these directories instead of the built-in suite."),
-    category: Optional[list[str]] = typer.Option(None, "--category", "-c"),
+    category: Optional[list[str]] = typer.Option(None, "--category", "-c", autocompletion=_complete_category),
     warnings_as_errors: bool = typer.Option(False, "--strict", help="Exit non-zero on warnings too."),
 ):
     """Check vectors for the mistakes that make a scanner lie. No API calls.

@@ -267,3 +267,79 @@ def test_markdown_neutralises_fences_in_model_output():
     md = report.markdown(rep)
     assert md.count("```") % 2 == 0
     assert "break out" in md
+
+
+# --- --dry-run -------------------------------------------------------------
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """Any request at all is a test failure: --dry-run exists to spend nothing."""
+    def boom(*a, **kw):
+        raise AssertionError("--dry-run sent a request")
+    monkeypatch.setattr(engine, "probe", boom)
+
+
+def test_dry_run_sends_nothing_and_reports_the_real_request_count(no_network):
+    r = runner.invoke(app, ["scan", "gpt-4o", "--dry-run"])
+    assert r.exit_code == 0
+    out = flat(r.output)
+    # 300 vectors is not 300 requests -- twelve are multi-turn and bill per turn.
+    n = sum(len(v.messages) for v in engine.load_vectors())
+    assert f"{n}" in out and n > len(engine.load_vectors())
+    assert "nothing sent" in out
+
+
+def test_dry_run_multiplies_requests_by_repeat(no_network):
+    r = runner.invoke(app, ["scan", "gpt-4o", "-c", "pii_leakage", "-n", "3",
+                            "--dry-run"])
+    assert r.exit_code == 0
+    want = sum(len(v.messages)
+               for v in engine.load_vectors(categories=["pii_leakage"])) * 3
+    assert str(want) in flat(r.output)
+
+
+def test_dry_run_projects_wall_time_from_rpm(no_network):
+    r = runner.invoke(app, ["scan", "gpt-4o", "--rpm", "9", "--dry-run"])
+    assert "min" in flat(r.output) and "--rpm 9" in flat(r.output)
+
+
+def test_dry_run_still_validates_options(no_network):
+    """It runs after parsing, so a bad option fails here rather than only on
+    the run that spends the quota."""
+    r = runner.invoke(app, ["scan", "gpt-4o", "--header", "nocolon", "--dry-run"])
+    assert r.exit_code == 2
+    r = runner.invoke(app, ["scan", "gpt-4o", "-c", "nope", "--dry-run"])
+    assert r.exit_code == 2
+
+
+def test_dry_run_accounts_for_resume(tmp_path, no_network):
+    v = engine.load_vectors(ids=["pii-001"])[0]
+    report = engine.summarise([engine.Result(v, False, HELD, replies=[HELD])],
+                              "gpt-4o", "ACME-1")
+    p = tmp_path / "r.json"
+    p.write_text(json.dumps(report))
+    r = runner.invoke(app, ["scan", "gpt-4o", "-c", "pii_leakage",
+                            "--resume", str(p), "--dry-run"])
+    assert r.exit_code == 0
+    assert "1 already done" in flat(r.output)
+
+
+# --- shell completion ------------------------------------------------------
+
+def test_completion_callbacks():
+    from lrtf import cli
+    assert cli._complete_category("pi") == ["pii_leakage"]
+    assert "pii-001" in cli._complete_id("pii-00")
+    # --exclude takes either kind, so it offers both.
+    target = cli._complete_target("j")
+    assert "jailbreak" in target and "jb-001" in target
+
+
+def test_completion_never_raises(monkeypatch):
+    """A traceback from a tab-press would land in the middle of the user's
+    command line."""
+    from lrtf import cli
+    monkeypatch.setattr(engine, "load_vectors",
+                        lambda *a, **kw: (_ for _ in ()).throw(OSError("boom")))
+    assert cli._complete_category("x") == []
+    assert cli._complete_id("x") == []
