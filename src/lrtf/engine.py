@@ -10,6 +10,8 @@ content.
 
 from __future__ import annotations
 
+import copy
+import functools
 import glob
 import json
 import logging
@@ -242,6 +244,26 @@ def load_detectors(paths: Iterable[str]) -> list[str]:
     return added
 
 
+@functools.lru_cache(maxsize=128)
+def _parse(path: str, stamp: tuple) -> list:
+    """Parsed rows for one YAML file, cached on (mtime, size).
+
+    Parsing the built-in suite costs ~70ms, and everything that touches vectors
+    calls load_vectors -- so a test run paid it a hundred times over. The stamp
+    is in the key so editing your own vectors mid-session still takes effect.
+    """
+    with open(path) as fh:
+        return yaml.safe_load(fh) or []
+
+
+def _rows(path: str) -> list:
+    st = os.stat(path)
+    # A copy per call: callers build Vectors from these dicts, and a list value
+    # like `match` would otherwise be shared with the cache and with every
+    # other Vector parsed from the same row.
+    return copy.deepcopy(_parse(path, (st.st_mtime_ns, st.st_size)))
+
+
 def load_vectors(
     path: str | Iterable[str] = VECTOR_DIR,
     categories: Iterable[str] | None = None,
@@ -262,7 +284,7 @@ def load_vectors(
     vectors: list[Vector] = []
     seen: set[str] = set()
     for file in files:
-        rows = yaml.safe_load(open(file)) or []
+        rows = _rows(file)
         if not isinstance(rows, list):
             raise ValueError(f"{os.path.basename(file)}: expected a list of vectors")
         for i, raw in enumerate(rows):

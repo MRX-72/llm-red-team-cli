@@ -2,6 +2,7 @@
 so they are what gets tested. No network: probe() is stubbed."""
 
 import threading
+import os
 import time
 
 import pytest
@@ -728,3 +729,26 @@ def test_workers_overlap_their_waits():
     for th in threads:
         th.join()
     assert time.monotonic() - start < 1.4      # 3 serialised sleeps would be 1.5
+
+
+def test_editing_a_vector_file_invalidates_the_cache(tmp_path):
+    """Parsed rows are cached, so someone iterating on their own vectors must
+    still see their edits without restarting."""
+    f = tmp_path / "v.yaml"
+    f.write_text("- {id: c-1, category: c, severity: low, title: first,"
+                 " detect: canary, prompt: p}")
+    assert engine.load_vectors(str(tmp_path))[0].title == "first"
+
+    f.write_text("- {id: c-1, category: c, severity: low, title: second,"
+                 " detect: canary, prompt: p}")
+    os.utime(f, (0, 0))                      # force a distinct mtime
+    assert engine.load_vectors(str(tmp_path))[0].title == "second"
+
+
+def test_cached_rows_are_copied_not_shared():
+    """Callers build Vectors from these dicts; a shared list value would let
+    one caller's mutation reach every later load."""
+    a = engine.load_vectors(ids=["pii-001"])[0]
+    assert isinstance(a.match, list)
+    a.match.append("MUTATED")
+    assert "MUTATED" not in engine.load_vectors(ids=["pii-001"])[0].match
