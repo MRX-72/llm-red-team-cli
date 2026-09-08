@@ -426,7 +426,36 @@ billed request, which is why the header reports requests as well as vectors.
 ```bash
 lrtf vectors                      # list every vector
 lrtf vectors -c indirect_injection
+lrtf lint                         # check vectors before spending anything on them
 ```
+
+## Two commands that cost nothing to run
+
+Both work entirely offline, because detection is a deterministic string match
+rather than a judge model.
+
+**`lrtf lint`** checks vectors for the mistakes that make a scanner lie, before
+a single request is paid for. Every rule exists because that bug actually
+shipped here: a regex that raised *mid-scan* after the API calls were spent,
+needles that flagged `I can't share my reference code` as a leak because it
+contains "reference code", an ASCII apostrophe that missed a model refusing with
+a curly one. It runs in CI on every push.
+
+**`lrtf verify report.json`** re-scores stored reports against the current
+detectors. Changing a detector invalidates every report on disk, and rescanning
+costs money and quota — this makes "did my fix move the numbers?" free:
+
+```
+groq/openai/gpt-oss-20b · 7/107 findings after re-scoring
+
+                   COUNT  VECTORS
+no longer flagged  4      mi-001, mi-004, mi-005, mi-006
+```
+
+That is a real run against a published report: four stored findings were
+correct refusals misread by an older detector. `--write` corrects the file,
+`--strict` fails CI on any drift. A vector that errored or came back blank is
+never re-judged — it was not tested, and calling it clean would invent a pass.
 
 ## Comparing models
 
