@@ -539,6 +539,9 @@ lrtf scan gpt-4o -c jailbreak --show-responses
 # machine-readable
 lrtf scan gpt-4o --json report.json
 
+# self-contained HTML report, for people rather than CI
+lrtf scan gpt-4o --html report.html
+
 # free tiers are strict; pace the scan so vectors do not error out
 lrtf scan gemini/gemini-2.5-flash --rpm 10
 
