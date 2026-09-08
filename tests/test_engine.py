@@ -127,7 +127,7 @@ def test_errors_never_report_as_a_clean_pass(monkeypatch):
     def flaky(*a, **k):
         calls["n"] += 1
         if calls["n"] % 2:
-            raise RuntimeError("429 rate limit")
+            raise RuntimeError("AuthenticationError: invalid key")
         return HEDGE
 
     monkeypatch.setattr(engine, "probe", flaky)
@@ -575,3 +575,122 @@ def test_bad_yaml_row_names_the_file_and_id(tmp_path):
     (tmp_path / "v.yaml").write_text("id: v-1\ncategory: c\n")
     with pytest.raises(ValueError, match="expected a list of vectors"):
         engine.load_vectors(str(tmp_path))
+
+
+# --- adaptive pacing -------------------------------------------------------
+
+def test_rate_limit_is_recognised_across_providers():
+    """Matched on the message, not the class: litellm wraps a dozen providers
+    and they do not agree on an exception type."""
+    from lrtf.engine import is_rate_limit
+    assert is_rate_limit(Exception("429 Too Many Requests. retry-after: 30")) == 30.0
+    assert is_rate_limit(Exception("RateLimitError: Rate limit reached")) == 0.0
+    assert is_rate_limit(Exception("quota exceeded")) == 0.0
+    assert is_rate_limit(Exception("BadRequestError: tool_use_failed")) is None
+
+
+def test_backoff_is_multiplicative_and_recovery_is_additive():
+    t = engine.Throttle(rpm=60)              # 1.0s gap
+    assert t.gap == 1.0
+    t.penalise()
+    assert t.gap == 2.0                      # doubled
+    t.penalise()
+    assert t.gap == 4.0
+    for _ in range(50):
+        t.relax()
+    assert t.gap == pytest.approx(1.0)       # walks back to the requested rate
+
+
+def test_retry_after_is_honoured_over_the_doubling():
+    t = engine.Throttle(rpm=60)
+    assert t.penalise(retry_after=30.0) == 30.0
+    assert t.gap == 30.0
+
+
+def test_an_unpaced_scan_still_learns_from_a_rate_limit():
+    """--rpm 0 has no gap to double. A 429 has to establish one or the pacing
+    never learns anything from being told no."""
+    t = engine.Throttle(rpm=0)
+    assert t.gap == 0.0
+    t.penalise()
+    assert t.gap >= 1.0
+
+
+def test_the_gap_is_capped():
+    t = engine.Throttle(rpm=60)
+    for _ in range(20):
+        t.penalise()
+    assert t.gap == engine.Throttle.MAX_GAP
+
+
+def test_a_rate_limited_vector_is_retried_through_the_throttle(monkeypatch):
+    calls = []
+
+    def flaky(model, system, prompt, history=None, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("RateLimitError: 429, retry-after: 0")
+        return "held: I can't help with that."
+
+    monkeypatch.setattr(engine, "probe", flaky)
+    monkeypatch.setattr(engine.time, "sleep", lambda s: None)
+    v = engine.load_vectors(ids=["jb-003"])
+    pacing = {}
+    results, _ = engine.run_scan("m", v, retries=2, workers=1, pacing=pacing)
+    assert len(calls) == 2
+    assert not results[0].error          # recovered, not reported as a failure
+    assert pacing["backoffs"] == 1
+
+
+def test_a_non_rate_limit_error_is_not_retried(monkeypatch):
+    """Retrying an auth failure 300 times helps nobody."""
+    calls = []
+
+    def broken(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("AuthenticationError: invalid api key")
+
+    monkeypatch.setattr(engine, "probe", broken)
+    v = engine.load_vectors(ids=["jb-003"])
+    results, _ = engine.run_scan("m", v, retries=2, workers=1)
+    assert len(calls) == 1
+    assert "AuthenticationError" in results[0].error
+
+
+def test_pacing_gives_up_instead_of_grinding_on_a_spent_quota(monkeypatch):
+    """A busy provider and an exhausted daily quota look identical per request.
+    Only the streak tells them apart -- and without a breaker, a spent quota
+    buys hours of doomed requests at a widened gap. Stopping the retries is not
+    enough; the scan itself has to end."""
+    calls = []
+
+    def always_limited(*a, **k):
+        calls.append(1)
+        raise RuntimeError("RateLimitError: 429 quota exceeded")
+
+    monkeypatch.setattr(engine, "probe", always_limited)
+    monkeypatch.setattr(engine.time, "sleep", lambda s: None)  # not timing here
+    vs = engine.load_vectors(severities=["low"])
+    pacing = {}
+    results, _ = engine.run_scan("m", vs, retries=2, workers=1, pacing=pacing)
+
+    assert pacing["gave_up"]
+    assert len(results) < len(vs)                 # stopped, did not grind
+    # The point is that it stops early, not the exact call count: a few
+    # vectors are in flight when the breaker trips.
+    assert len(calls) < len(vs)
+    assert all(r.error for r in results)
+    # The truncation is recorded, not silent.
+    assert engine.summarise(results, "m", "C", requested=len(vs))["skipped"] > 0
+
+
+def test_a_success_resets_the_give_up_streak():
+    t = engine.Throttle(rpm=60)
+    for _ in range(4):
+        t.penalise()
+    assert not t.exhausted
+    t.relax()
+    assert t.streak == 0
+    for _ in range(4):
+        t.penalise()
+    assert not t.exhausted          # the earlier run does not carry over

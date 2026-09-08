@@ -172,6 +172,53 @@ lrtf scan gpt-4o --sample 30 --seed 7
 lrtf scan gpt-4o --vectors ./our-vectors/      # your payloads, no fork needed
 ```
 
+### Pacing that adapts
+
+`--rpm` is your guess at a documented limit, and documented limits are
+routinely wrong — a burst allowance, a shared org quota, a per-model cap below
+the account cap. So the ceiling moves.
+
+A rate limit **doubles the gap** (or honours `Retry-After` when the provider
+sends one); every success after that walks it back toward the rate you asked
+for. Multiplicative decrease, additive increase — the control loop TCP uses,
+for the same reason: it stops a scan oscillating between hammering and
+crawling. Rate limits are retried *through* the throttle rather than inside the
+provider client, because a retry that ignores the pacing makes the problem
+worse.
+
+When the scan is over it tells you what actually worked:
+
+```
+pacing: backed off 15× · settled at ~2.2 rpm (asked for 9) — try --rpm 2 next time
+```
+
+That line is in the JSON report too, so the next run starts from a measured
+rate instead of another guess.
+
+**It also knows when to stop.** A busy endpoint and a spent daily quota look
+identical per request — only the streak tells them apart. After five
+consecutive rate limits with no success between them, the scan ends rather than
+grinding through hundreds of doomed requests at a widened gap. `skipped`
+records what never ran, so a quota-killed scan can never be mistaken for a
+clean one.
+
+### Errors grouped by cause
+
+A failed scan used to print its first error and nothing else, so forty failures
+across three distinct causes read as a single anecdote.
+
+```
+Errors
+N  CAUSE
+5  RuntimeError: BadRequestError: Tool choice is none, but model called a tool
+1  RuntimeError: RateLimitError: rate limit reached …
+```
+
+Request ids, UUIDs and timestamps are folded out before grouping, so one cause
+stays one row. The redaction is deliberately narrow — a looser rule also eats
+model names like `gpt-4o-mini`, and grouping errors under a redacted model name
+is worse than not grouping them at all.
+
 ### 4.1b Buffs — one transformation, the whole suite
 
 A vector is one attack. A **buff** is a *dimension* — it rewrites the payload
@@ -256,7 +303,7 @@ through untouched.
 |---|---|---|
 | `-n`, `--repeat N` | `1` | Run each vector N times. Findings report `hits/runs`. |
 | `-w`, `--workers N` | `4` | Parallel requests. |
-| `--rpm N` | `0` (off) | Cap requests per minute. **Set this on free tiers.** |
+| `--rpm N` | `0` (off) | Starting requests-per-minute ceiling. Adapts down on rate limits and back up on success. |
 | `--temperature F` | `0.0` | Lower is more reproducible. |
 | `--max-tokens N` | provider default | Cap response length. |
 | `--timeout SECONDS` | none | Per-request timeout. |

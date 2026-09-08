@@ -55,27 +55,92 @@ def new_canary() -> str:
     return "ACME-" + secrets.token_hex(4).upper()
 
 
+_RETRY_AFTER = re.compile(r"retry[-_ ]?after[\"\':= ]+(\d+(?:\.\d+)?)", re.I)
+_RATE_LIMITED = re.compile(r"rate.?limit|429|too many requests|quota", re.I)
+
+
+def is_rate_limit(exc: Exception) -> float | None:
+    """Seconds the provider asked us to wait, 0.0 if it rate-limited us without
+    saying, or None if this was not a rate limit at all.
+
+    Matched on the message rather than the exception class: litellm wraps a
+    dozen providers and they do not agree on a type, but every one of them says
+    so in the text.
+    """
+    text = f"{type(exc).__name__}: {exc}"
+    if not _RATE_LIMITED.search(text):
+        return None
+    m = _RETRY_AFTER.search(text)
+    return float(m.group(1)) if m else 0.0
+
+
 class Throttle:
-    """Paces requests to a fixed requests-per-minute ceiling.
+    """Paces requests, and adapts when the provider pushes back.
 
     Free provider tiers sit around 10 RPM, low enough that an unpaced scan
     returns mostly 429s. Shared across worker threads so --workers still helps
     hide latency without exceeding the ceiling.
+
+    --rpm is the user's guess at a documented limit, and the documented limit is
+    routinely wrong -- a burst allowance, a shared org quota, a per-model cap
+    below the account cap. So the ceiling moves: AIMD, the same control loop TCP
+    uses. A rate limit doubles the gap (or honours Retry-After if the provider
+    sent one); every success after that walks it back toward the requested rate.
+    Backing off multiplicatively and recovering additively is what keeps a scan
+    from oscillating between hammering and crawling.
     """
 
+    MAX_GAP = 30.0          # past this, pacing is not the problem
+    RECOVER = 0.9           # each success closes 10% of the excess gap
+    GIVE_UP_AFTER = 5       # consecutive backoffs with no success in between
+
     def __init__(self, rpm: int = 0):
-        self.gap = 60.0 / rpm if rpm else 0.0
+        self.base = 60.0 / rpm if rpm else 0.0
+        self.gap = self.base
+        self.backoffs = 0
+        self.streak = 0
         self._lock = threading.Lock()
         self._last = 0.0
 
     def wait(self) -> None:
-        if not self.gap:
-            return
         with self._lock:
-            delay = self._last + self.gap - time.monotonic()
+            gap = self.gap
+            if not gap:
+                return
+            delay = self._last + gap - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
             self._last = time.monotonic()
+
+    def penalise(self, retry_after: float = 0.0) -> float:
+        """Widen the gap after a rate limit. Returns how long to sleep now."""
+        with self._lock:
+            # An unpaced scan has no gap to double, so a 429 has to establish
+            # one -- otherwise --rpm 0 never learns anything from being told no.
+            widened = max(self.gap * 2, retry_after, 1.0)
+            self.gap = min(widened, self.MAX_GAP)
+            self.backoffs += 1
+            self.streak += 1
+            return max(retry_after, self.gap)
+
+    def relax(self) -> None:
+        """Walk the gap back toward the requested rate after a success."""
+        with self._lock:
+            self.streak = 0
+            if self.gap > self.base:
+                self.gap = max(self.base, self.gap * self.RECOVER)
+
+    @property
+    def exhausted(self) -> bool:
+        """Backing off is the right answer to a busy provider and the wrong one
+        to a spent quota -- they look identical per request, and only the streak
+        tells them apart. Without this, an exhausted daily quota turns a scan
+        into hours of doubling sleeps that were never going to succeed."""
+        return self.streak >= self.GIVE_UP_AFTER
+
+    @property
+    def effective_rpm(self) -> float:
+        return 60.0 / self.gap if self.gap else 0.0
 
 
 @dataclass
@@ -498,6 +563,7 @@ def run_scan(
     repeat: int = 1,
     fail_fast: bool = False,
     on_result=None,
+    pacing: dict | None = None,
     **kw,
 ) -> tuple[list[Result], str]:
     canary = canary or new_canary()
@@ -507,11 +573,29 @@ def run_scan(
     throttle = Throttle(rpm)
 
     def attempt(v: Vector) -> Result:
-        try:
-            replies = converse(model, system, v.messages, throttle=throttle,
-                               num_retries=retries, **kw)
-        except Exception as exc:  # provider/network/auth failures are reported, not raised
-            return Result(v, False, "", error=f"{type(exc).__name__}: {exc}")
+        # litellm's num_retries handles transient network faults on its own
+        # schedule. Rate limits are handled here instead, because they are the
+        # one failure the pacing can learn from -- retrying them inside the
+        # provider client happens outside the throttle and makes it worse.
+        for remaining in range(retries, -1, -1):
+            try:
+                replies = converse(model, system, v.messages, throttle=throttle,
+                                   num_retries=retries, **kw)
+            except Exception as exc:  # provider/network/auth: reported, not raised
+                after = is_rate_limit(exc)
+                if after is None or not remaining:
+                    return Result(v, False, "", error=f"{type(exc).__name__}: {exc}")
+                if throttle.exhausted:
+                    # Stopping the retries is not enough: the widened gap would
+                    # still pace every remaining vector at up to MAX_GAP each,
+                    # so a spent quota buys hours of doomed requests. End the
+                    # scan instead -- `skipped` records what never ran.
+                    stop.set()
+                    return Result(v, False, "", error=f"{type(exc).__name__}: {exc}")
+                time.sleep(throttle.penalise(after))
+                continue
+            throttle.relax()
+            break
         # A multi-turn attack can land on any turn, not only the last. Report the
         # first turn that leaks, since that is the one worth reading.
         for i, reply in enumerate(replies, start=1):
@@ -565,6 +649,14 @@ def run_scan(
                 for f in futures:  # drop what has not started yet
                     f.cancel()
     results.sort(key=lambda r: order[r.vector.id])
+    # What rate actually worked is the number worth keeping: the next scan can
+    # start there instead of guessing at the documented limit again. An
+    # out-parameter rather than a return value, so no caller has to change --
+    # and rather than a function attribute, which two concurrent scans share.
+    if pacing is not None:
+        pacing.update(backoffs=throttle.backoffs,
+                      effective_rpm=round(throttle.effective_rpm, 1),
+                      requested_rpm=rpm, gave_up=throttle.exhausted)
     return results, canary
 
 

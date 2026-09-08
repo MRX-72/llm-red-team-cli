@@ -185,7 +185,9 @@ def _partial(tmp_path, monkeypatch):
     def half(*a, **k):
         calls["n"] += 1
         if calls["n"] % 2:
-            raise RuntimeError("429 rate limit")
+            # Not a 429: rate limits are retried through the throttle now,
+            # so one would recover and this test would have no error to count.
+            raise RuntimeError("AuthenticationError: invalid key")
         return HELD
 
     monkeypatch.setattr(engine, "probe", half)
