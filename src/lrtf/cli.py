@@ -33,6 +33,10 @@ def scan(
     model: str = typer.Argument(..., help="Target model, litellm syntax. e.g. gpt-4o, anthropic/claude-sonnet-4-5, ollama/llama3"),
     category: Optional[list[str]] = typer.Option(None, "--category", "-c", help="Limit to categories (repeatable)."),
     severity: Optional[list[str]] = typer.Option(None, "--severity", "-s", help="Limit to severities (repeatable)."),
+    ids: Optional[list[str]] = typer.Option(None, "--id", "-i", help="Run only these vector ids (repeatable)."),
+    exclude: Optional[list[str]] = typer.Option(None, "--exclude", "-x", help="Skip these categories or ids (repeatable)."),
+    sample_n: Optional[int] = typer.Option(None, "--sample", help="Run a random subset of this size, stratified by category."),
+    seed: Optional[int] = typer.Option(None, "--seed", help="Make --sample reproducible."),
     system: Optional[pathlib.Path] = typer.Option(None, "--system", help="File holding your own system prompt. Must contain {canary}."),
     vectors_dir: Optional[list[pathlib.Path]] = typer.Option(
         None, "--vectors", help="Load vectors from these directories instead of the built-in suite (repeatable)."),
@@ -43,18 +47,50 @@ def scan(
     temperature: float = typer.Option(0.0, "--temperature", help="Lower is more reproducible."),
     max_tokens: Optional[int] = typer.Option(
         None, "--max-tokens", help="Cap response length. Needed on token-per-minute limited tiers, since the unbounded_consumption vectors deliberately ask for huge outputs."),
+    timeout: Optional[float] = typer.Option(None, "--timeout", help="Per-request timeout in seconds."),
+    canary: Optional[str] = typer.Option(None, "--canary", help="Pin the canary instead of generating a fresh one. Weakens the scan: a fixed token can be cached or memorised. For debugging only."),
+    api_base: Optional[str] = typer.Option(None, "--api-base", help="Provider base URL, for self-hosted or proxied endpoints."),
+    api_key: Optional[str] = typer.Option(None, "--api-key", help="API key. Prefer the provider's environment variable; this lands in your shell history."),
+    header: Optional[list[str]] = typer.Option(None, "--header", "-H", help="Extra request header as 'Name: value' (repeatable)."),
+    resume: Optional[pathlib.Path] = typer.Option(None, "--resume", help="Continue a partial scan: vectors already completed in this report are not re-run."),
+    fail_fast: bool = typer.Option(False, "--fail-fast", help="Stop as soon as a high-severity vector gets through."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Print only the verdict line. Exit code still gates."),
     json_out: Optional[pathlib.Path] = typer.Option(None, "--json", help="Write the full report here."),
     html_out: Optional[pathlib.Path] = typer.Option(None, "--html", help="Write a self-contained HTML report here."),
+    md_out: Optional[pathlib.Path] = typer.Option(None, "--markdown", help="Write a report sized for a PR comment here."),
     fail_on: str = typer.Option("high", "--fail-on", help="Exit non-zero at this severity or above: high|medium|low|never."),
     show_responses: bool = typer.Option(False, "--show-responses", help="Print the model reply for each finding."),
     tui: bool = typer.Option(False, "--tui", help="Live view: watch each vector land as it completes."),
 ):
     """Run the adversarial suite against a model and report what got through."""
     source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
-    vectors = engine.load_vectors(source, categories=category, severities=severity)
+    try:
+        vectors = engine.load_vectors(source, categories=category, severities=severity,
+                                      ids=ids, exclude=exclude)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2)
+    if sample_n:
+        vectors = engine.sample(vectors, sample_n, seed)
     if not vectors:
         console.print("[red]No vectors matched those filters.[/]")
         raise typer.Exit(2)
+
+    # --resume: keep what already ran, re-run only what did not. A vector that
+    # errored or came back blank was never really tested, so it is not "done".
+    resumed: list = []
+    if resume:
+        prior = json.loads(resume.read_text())
+        resumed = [engine.result_from_dict(f) for f in prior["findings"]
+                if not f["error"] and "".join(f.get("replies") or [f["response"]]).strip()]
+        canary = canary or prior.get("canary")
+        finished = {r.vector.id for r in resumed}
+        vectors = [v for v in vectors if v.id not in finished]
+        if not quiet:
+            console.print(f"[dim]resuming: {len(resumed)} already complete, "
+                          f"{len(vectors)} to run[/]")
+        if not vectors:
+            console.print("[green]Nothing left to run.[/]")
 
     custom = None
     if system:
@@ -66,35 +102,66 @@ def scan(
     requests = sum(len(v.messages) for v in vectors) * repeat
     extra = f" · {requests} requests" if requests != len(vectors) else ""
     extra += f" · {repeat}x each" if repeat > 1 else ""
-    console.print(Panel(f"[bold]{model}[/]\n{len(vectors)} vectors · "
-                        f"{len({v.category for v in vectors})} categories{extra}",
-                        title="LLM Red Team", border_style="blue"))
+    if not quiet:
+        console.print(Panel(f"[bold]{model}[/]\n{len(vectors)} vectors · "
+                            f"{len({v.category for v in vectors})} categories{extra}",
+                            title="LLM Red Team", border_style="blue"))
 
     kw = dict(system=custom, workers=workers, rpm=rpm, repeat=repeat,
-              temperature=temperature)
+              temperature=temperature, fail_fast=fail_fast, canary=canary)
     if max_tokens:
         kw["max_tokens"] = max_tokens
-    if tui:
+    if timeout:
+        kw["timeout"] = timeout
+    if api_base:
+        kw["api_base"] = api_base
+    if api_key:
+        kw["api_key"] = api_key
+    if header:
+        try:
+            kw["extra_headers"] = dict(h.split(":", 1) for h in header)
+            kw["extra_headers"] = {k.strip(): v.strip()
+                                   for k, v in kw["extra_headers"].items()}
+        except ValueError:
+            console.print("[red]--header must be 'Name: value'[/]")
+            raise typer.Exit(2)
+    if quiet:
+        results_, canary = engine.run_scan(model, vectors, **kw)
+    elif tui:
         view = LiveScan(model, len(vectors))
         with Live(view, console=console, refresh_per_second=8, transient=True):
             results_, canary = engine.run_scan(model, vectors, on_result=view.add, **kw)
     else:
-        done = [0]
+        seen = [0]
         with console.status("[blue]probing…") as status:
             def tick(r):
-                done[0] += 1
-                status.update(f"[blue]probing… {done[0]}/{len(vectors)}  ({r.vector.id})")
+                seen[0] += 1
+                status.update(f"[blue]probing… {seen[0]}/{len(vectors)}  ({r.vector.id})")
             results_, canary = engine.run_scan(model, vectors, on_result=tick, **kw)
 
+    results_ = sorted(resumed + list(results_),
+                      key=lambda r: (engine.SEVERITY_ORDER.get(r.vector.severity, 9),
+                                     r.vector.id))
     report = engine.summarise(results_, model, canary)
-    _render(report, show_responses)
+    if quiet:
+        s = report["by_severity"]
+        console.print(f"{report['risk']}  {report['vulnerable']}/{report['total']} "
+                      f"({s['high']}H {s['medium']}M {s['low']}L)")
+    else:
+        _render(report, show_responses)
 
     if json_out:
         json_out.write_text(json.dumps(report, indent=2))
-        console.print(f"\n[dim]report → {json_out}[/]")
+        if not quiet:
+            console.print(f"\n[dim]report → {json_out}[/]")
     if html_out:
         html_out.write_text(report_mod.render(report))
-        console.print(f"[dim]html → {html_out}[/]")
+        if not quiet:
+            console.print(f"[dim]html → {html_out}[/]")
+    if md_out:
+        md_out.write_text(report_mod.markdown(report))
+        if not quiet:
+            console.print(f"[dim]markdown → {md_out}[/]")
 
     thresholds = {"high": ["high"], "medium": ["high", "medium"],
                   "low": ["high", "medium", "low"], "never": []}
