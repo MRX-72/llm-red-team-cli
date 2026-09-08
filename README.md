@@ -542,6 +542,28 @@ lrtf scan gpt-4o --json report.json
 # self-contained HTML report, for people rather than CI
 lrtf scan gpt-4o --html report.html
 
+# a report sized for a PR comment
+lrtf scan gpt-4o --markdown report.md
+
+# one vector, or everything except the expensive category
+lrtf scan gpt-4o --id jb-014 --id ea-002
+lrtf scan gpt-4o --exclude unbounded_consumption
+
+# a stratified 30-vector smoke test, reproducible
+lrtf scan gpt-4o --sample 30 --seed 7
+
+# self-hosted, proxied or gateway endpoints
+lrtf scan my-model --api-base https://vllm.internal/v1 -H "X-Tenant: acme"
+
+# quota ran out mid-scan? pick up where it stopped
+lrtf scan gpt-4o --json partial.json --resume partial.json
+
+# stop at the first high-severity bypass
+lrtf scan gpt-4o --fail-fast
+
+# verdict line only, for scripts
+lrtf scan gpt-4o --quiet
+
 # free tiers are strict; pace the scan so vectors do not error out
 lrtf scan gemini/gemini-2.5-flash --rpm 10
 

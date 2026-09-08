@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import random
 import secrets
 import threading
 import time
@@ -120,6 +121,8 @@ def load_vectors(
     path: str | Iterable[str] = VECTOR_DIR,
     categories: Iterable[str] | None = None,
     severities: Iterable[str] | None = None,
+    ids: Iterable[str] | None = None,
+    exclude: Iterable[str] | None = None,
 ) -> list[Vector]:
     """Load vectors from the built-in suite, or from directories you name.
 
@@ -149,7 +152,53 @@ def load_vectors(
     if severities:
         wanted = set(severities)
         vectors = [v for v in vectors if v.severity in wanted]
+    if ids:
+        wanted = set(ids)
+        unknown = wanted - {v.id for v in vectors}
+        if unknown:
+            raise ValueError(f"no such vector: {', '.join(sorted(unknown))}")
+        vectors = [v for v in vectors if v.id in wanted]
+    if exclude:
+        # One flag for both, because "skip this" is one intent: a category name
+        # and a vector id can never collide, ids always carry a hyphen.
+        drop = set(exclude)
+        vectors = [v for v in vectors if v.id not in drop and v.category not in drop]
     return sorted(vectors, key=lambda v: (SEVERITY_ORDER.get(v.severity, 9), v.id))
+
+
+def sample(vectors: list[Vector], n: int, seed: int | None = None) -> list[Vector]:
+    """A random subset, stratified by category.
+
+    A flat random sample of 30 from 300 can miss whole categories, which makes a
+    smoke test quietly useless. Taking proportionally from each keeps the shape
+    of the suite.
+    """
+    if n >= len(vectors):
+        return vectors
+    rng = random.Random(seed)
+    by_cat: dict[str, list[Vector]] = {}
+    for v in vectors:
+        by_cat.setdefault(v.category, []).append(v)
+
+    picked: list[Vector] = []
+    for cat, group in sorted(by_cat.items()):
+        take = max(1, round(n * len(group) / len(vectors)))
+        picked += rng.sample(group, min(take, len(group)))
+    rng.shuffle(picked)
+    picked = picked[:n]
+    return sorted(picked, key=lambda v: (SEVERITY_ORDER.get(v.severity, 9), v.id))
+
+
+def result_from_dict(d: dict) -> Result:
+    """Rebuild a Result from a stored report, so --resume can merge a partial
+    scan with the vectors it did not reach."""
+    return Result(
+        vector=Vector(**d["vector"]),
+        vulnerable=d["vulnerable"], response=d["response"],
+        evidence=d.get("evidence", ""), error=d.get("error", ""),
+        replies=d.get("replies", []), turn=d.get("turn", 0),
+        runs=d.get("runs", 1), hits=d.get("hits", 1),
+    )
 
 
 # --- detectors -------------------------------------------------------------
@@ -360,6 +409,7 @@ def run_scan(
     rpm: int = 0,
     retries: int = 2,
     repeat: int = 1,
+    fail_fast: bool = False,
     on_result=None,
     **kw,
 ) -> tuple[list[Result], str]:
@@ -381,13 +431,20 @@ def run_scan(
                 return Result(v, True, reply, evidence, replies=replies, turn=i)
         return Result(v, False, replies[-1] if replies else "", replies=replies)
 
-    def one(v: Vector) -> Result:
+    def one(v: Vector) -> Result | None:
         """Run the vector `repeat` times and fold the attempts into one result.
+
+        Returns None once fail_fast has tripped. Cancelling queued futures is not
+        enough on its own: a worker can drain the queue before the main thread
+        gets scheduled to cancel anything, so the stop flag is checked here,
+        before any request is paid for.
 
         Guardrails are probabilistic: a framing that is refused once may land on
         the next try. A single pass is an observation, not a rate. Any leak makes
         the vector a finding, and `hits/runs` records how reliably it reproduces.
         """
+        if stop.is_set():
+            return None
         attempts = [attempt(v) for _ in range(repeat)]
         leaked = [r for r in attempts if r.vulnerable]
         ran = [r for r in attempts if not r.error]
@@ -401,14 +458,23 @@ def run_scan(
     # back into vector order before returning, so the report stays deterministic
     # regardless of what finished first.
     order = {v.id: i for i, v in enumerate(vectors)}
+    stop = threading.Event()
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(one, v) for v in vectors]
         for fut in as_completed(futures):
+            if fut.cancelled():    # dropped by fail_fast before it started
+                continue
             r = fut.result()
+            if r is None:          # reached one() after fail_fast tripped
+                continue
             results.append(r)
             if on_result:
                 on_result(r)
+            if fail_fast and r.vulnerable and r.vector.severity == "high":
+                stop.set()
+                for f in futures:  # drop what has not started yet
+                    f.cancel()
     results.sort(key=lambda r: order[r.vector.id])
     return results, canary
 
