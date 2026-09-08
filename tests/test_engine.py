@@ -1,6 +1,7 @@
 """The detectors and the scan loop are what a false PASS would hide behind,
 so they are what gets tested. No network: probe() is stubbed."""
 
+import threading
 import time
 
 import pytest
@@ -694,3 +695,36 @@ def test_a_success_resets_the_give_up_streak():
     for _ in range(4):
         t.penalise()
     assert not t.exhausted          # the earlier run does not carry over
+
+
+def test_the_throttle_does_not_hold_its_lock_while_sleeping(monkeypatch):
+    """A worker that has just been rate-limited must be able to say so
+    immediately. Holding the lock across the sleep delayed every backoff by up
+    to a full gap."""
+    t = engine.Throttle(rpm=6)          # 10s gap
+    done = threading.Event()
+
+    def sleeper():
+        t.wait()                        # first call returns at once
+        t.wait()                        # this one sleeps ~10s
+        done.set()
+
+    threading.Thread(target=sleeper, daemon=True).start()
+    time.sleep(0.2)                     # let it enter the sleep
+    start = time.monotonic()
+    t.penalise()                        # must not block behind that sleep
+    assert time.monotonic() - start < 1.0
+    assert not done.is_set()            # it is genuinely still sleeping
+
+
+def test_workers_overlap_their_waits():
+    """Three workers at 60 rpm should finish in about two gaps, not three: the
+    slots are reserved up front and the sleeps run concurrently."""
+    t = engine.Throttle(rpm=120)        # 0.5s gap
+    start = time.monotonic()
+    threads = [threading.Thread(target=t.wait) for _ in range(3)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert time.monotonic() - start < 1.4      # 3 serialised sleeps would be 1.5
