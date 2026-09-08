@@ -12,6 +12,8 @@ Every rule here exists because the corresponding bug actually shipped:
         so four correct refusals were reported as findings
   E012  a blank entry in match or reject_if is a silent kill switch: in match
         the vector fires on everything, in reject_if it can never report
+  E013  emoji written as YAML surrogate pairs stayed unpaired surrogates, so
+        the prompt could not be .encode()d and every buff raised on it
   W002  a payload that appears in a correctly-defended answer needs reject_if,
         or the vector flags a model for escaping properly
 
@@ -146,6 +148,14 @@ def _shape_issues(v: Vector) -> list[Issue]:
                          "turns needs at least two; use prompt for a single message"))
     if not all(t.strip() for t in v.messages):
         out.append(Issue("error", "E008", v.id, "has an empty turn"))
+    if any(0xD800 <= ord(c) <= 0xDFFF for t in v.messages for c in t):
+        # An astral character written as a \udXXX\udXXX pair in YAML stays an
+        # unpaired surrogate in Python. json.dumps re-escapes it so requests
+        # still go out, which is why this hid -- but the string cannot be
+        # .encode()d, so anything that transforms the prompt raises on it.
+        out.append(Issue("error", "E013", v.id,
+                         "prompt contains an unpaired surrogate — write astral "
+                         "characters as \\U0001XXXX, not a \\udXXX pair"))
     if v.severity not in SEVERITY_ORDER:
         out.append(Issue("error", "E009", v.id, f"unknown severity {v.severity!r}"))
     if v.detect != "canary" and not v.match:
@@ -177,7 +187,7 @@ def _advice_issues(v: Vector) -> list[Issue]:
 
 # Codes that leave the vector un-evaluatable. Running the detector-dependent
 # rules anyway would raise on exactly the input this tool exists to flag.
-FATAL = {"E001", "E005", "E006", "E008", "E010", "E012"}
+FATAL = {"E001", "E005", "E006", "E008", "E010", "E012", "E013"}
 
 
 def check(vectors: list[Vector]) -> list[Issue]:

@@ -13,7 +13,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TextColumn
 from rich.table import Table
 
-from . import engine, lint as lint_mod, report as report_mod
+from . import buffs as buffs_mod, engine, lint as lint_mod, report as report_mod
 
 def _load_report(path: pathlib.Path) -> dict:
     """Read a report, failing with a message rather than a traceback.
@@ -53,6 +53,10 @@ def _complete_category(incomplete: str) -> list[str]:
 
 def _complete_id(incomplete: str) -> list[str]:
     return [v.id for v in _suite() if v.id.startswith(incomplete)]
+
+
+def _complete_buff(incomplete: str) -> list[str]:
+    return sorted(b for b in buffs_mod.BUFFS if b.startswith(incomplete))
 
 
 def _complete_target(incomplete: str) -> list[str]:
@@ -122,6 +126,8 @@ def scan(
     system: Optional[pathlib.Path] = typer.Option(None, "--system", help="File holding your own system prompt. Must contain {canary}."),
     vectors_dir: Optional[list[pathlib.Path]] = typer.Option(
         None, "--vectors", help="Load vectors from these directories instead of the built-in suite (repeatable)."),
+    buff: Optional[list[str]] = typer.Option(
+        None, "--buff", help="Rewrite every selected vector through this transformation (repeatable). One buff multiplies the whole suite.", autocompletion=_complete_buff),
     repeat: int = typer.Option(
         1, "--repeat", "-n", help="Run each vector N times. Guardrails are probabilistic; findings report hits/runs."),
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel requests."),
@@ -154,6 +160,16 @@ def scan(
     except ValueError as exc:
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(2)
+    if buff:
+        try:
+            vectors, unbuffable = buffs_mod.apply(vectors, buff)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/]")
+            raise typer.Exit(2)
+        if unbuffable and not quiet:
+            console.print(f"[dim]{unbuffable} vectors skipped: the `absent` "
+                          f"detector reports a missing hedge, so a rewritten "
+                          f"prompt would manufacture findings[/]")
     if sample_n:
         vectors = engine.sample(vectors, sample_n, seed)
     if not vectors:
