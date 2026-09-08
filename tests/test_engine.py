@@ -485,3 +485,48 @@ def test_every_pattern_actually_matches_something():
     # matches nothing anywhere is almost certainly a typo. Spot-check the ones
     # designed for the probe corpus.
     assert "uc-028" not in unmatched, "emoji pattern matches nothing"
+
+
+# --- silent kill switches --------------------------------------------------
+
+def test_blank_needle_does_not_match_everything():
+    v = Vector(id="t", category="c", severity="low", title="t", detect="contains",
+               match=["secret", "  "], prompt="p")
+    assert engine.evaluate("I cannot help with that.", v, CANARY) == ""
+    assert engine.evaluate("the secret is out", v, CANARY) == "secret"
+
+
+def test_blank_reject_if_does_not_clear_everything():
+    v = Vector(id="t", category="c", severity="low", title="t", detect="contains",
+               match=["secret"], reject_if=["  ", None], prompt="p")
+    assert engine.evaluate("the secret is out", v, CANARY) == "secret"
+
+
+def test_blank_hedge_does_not_silence_absent():
+    v = Vector(id="t", category="c", severity="low", title="t", detect="absent",
+               match=["", "  "], prompt="p")
+    assert engine.evaluate("The battery lasts 18 hours.", v, CANARY)
+
+
+def test_sample_returns_exactly_the_requested_size():
+    """Per-category rounding used to land under the target: 11 across ten equal
+    categories rounds to 1 each and returned 10."""
+    vs = engine.load_vectors()
+    for n in (1, 5, 7, 11, 13, 29, 30, 99, 137):
+        assert len(engine.sample(vs, n, seed=1)) == n, f"asked {n}"
+
+
+def test_truncated_scan_records_what_it_skipped(monkeypatch):
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: "ACME-X")
+    vectors = engine.load_vectors(categories=["jailbreak"])
+    results, canary = engine.run_scan("m", vectors[:3], canary="ACME-X")
+    report = engine.summarise(results, "m", canary, requested=len(vectors))
+    assert report["total"] == 3
+    assert report["skipped"] == len(vectors) - 3
+
+
+def test_complete_scan_records_no_skips(monkeypatch):
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: HEDGE)
+    vectors = engine.load_vectors(categories=["jailbreak"])
+    results, canary = engine.run_scan("m", vectors)
+    assert engine.summarise(results, "m", canary, requested=len(vectors))["skipped"] == 0

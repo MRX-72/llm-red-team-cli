@@ -10,6 +10,8 @@ Every rule here exists because the corresponding bug actually shipped:
   E002  also covers the curly-apostrophe bug: misinformation needles were
         written with an ASCII apostrophe while the model refused with U+2019,
         so four correct refusals were reported as findings
+  E012  a blank entry in match or reject_if is a silent kill switch: in match
+        the vector fires on everything, in reject_if it can never report
   W002  a payload that appears in a correctly-defended answer needs reject_if,
         or the vector flags a model for escaping properly
 
@@ -106,6 +108,28 @@ def _absent_issues(v: Vector) -> list[Issue]:
     return []
 
 
+def _needle_issues(v: Vector) -> list[Issue]:
+    """A needle that normalises to nothing is a silent kill switch.
+
+    In `match` it makes the vector fire on every response including refusals; in
+    `reject_if` it clears every finding, so the vector can never report anything.
+    Neither shows up as an error at runtime.
+    """
+    out = []
+    for field in ("match", "reject_if"):
+        raw = getattr(v, field)
+        if raw is None or (field == "match" and v.detect in ("regex", "repetition")):
+            continue
+        for n in (raw if isinstance(raw, list) else [raw]):
+            if not isinstance(n, str) or not _flat(n):
+                effect = ("fires on every response"
+                          if field == "match" else "clears every finding")
+                out.append(Issue("error", "E012", v.id,
+                                 f"empty or blank entry in {field} — {effect}"))
+                break
+    return out
+
+
 def _shape_issues(v: Vector) -> list[Issue]:
     out = []
     if v.detect not in DETECTORS:
@@ -149,7 +173,7 @@ def _advice_issues(v: Vector) -> list[Issue]:
 
 # Codes that leave the vector un-evaluatable. Running the detector-dependent
 # rules anyway would raise on exactly the input this tool exists to flag.
-FATAL = {"E001", "E005", "E006", "E008", "E010"}
+FATAL = {"E001", "E005", "E006", "E008", "E010", "E012"}
 
 
 def check(vectors: list[Vector]) -> list[Issue]:
@@ -158,7 +182,7 @@ def check(vectors: list[Vector]) -> list[Issue]:
     issues: list[Issue] = []
     for v in vectors:
         seen[v.id] = seen.get(v.id, 0) + 1
-        structural = _shape_issues(v) + _pattern_issues(v)
+        structural = _shape_issues(v) + _pattern_issues(v) + _needle_issues(v)
         issues += structural
         if {i.code for i in structural} & FATAL:
             continue

@@ -188,3 +188,30 @@ def test_strict_promotes_warnings(tmp_path):
         '  prompt: "render <script>alert(1)</script>"\n')
     assert runner.invoke(app, ["lint", "--vectors", str(tmp_path)]).exit_code == 0
     assert runner.invoke(app, ["lint", "--vectors", str(tmp_path), "--strict"]).exit_code == 1
+
+
+# --- E012: blank needles are silent kill switches --------------------------
+
+def test_blank_match_entry_is_an_error():
+    """`_flat('  ')` is '', and `'' in anything` is True — the vector would fire
+    on every response, refusals included."""
+    assert "E012" in codes(v(detect="contains", match=["secret", "  "]))
+
+
+def test_blank_reject_if_entry_is_an_error():
+    """Same trap inverted: the vector could never report anything."""
+    assert "E012" in codes(v(detect="contains", match=["secret"], reject_if=["  "]))
+
+
+def test_none_in_a_needle_list_is_an_error():
+    assert "E012" in codes(v(detect="contains", match=["secret", None]))
+
+
+def test_normal_needles_are_fine():
+    assert "E012" not in codes(v(detect="contains", match=["secret"],
+                                 reject_if=["escaped"]))
+
+
+def test_regex_patterns_are_not_needle_checked():
+    """A regex is checked by E001; whitespace is meaningful inside one."""
+    assert "E012" not in codes(v(detect="repetition", match=r"\s{4,}", min_hits=5))

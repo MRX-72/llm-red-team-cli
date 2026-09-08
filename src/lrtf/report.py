@@ -130,10 +130,15 @@ def render(report: dict, title: str = "LRTF scan") -> str:
         ("Bypassed", report["vulnerable"]), ("High", s["high"]),
         ("Medium", s["medium"]), ("Low", s["low"]),
         ("Errors", report.get("errors", 0)), ("Blank", report.get("blank", 0)),
+        ("Skipped", report.get("skipped", 0)),
     ]
     cards = "".join(f'<div class="stat"><b>{e(v)}</b><span>{e(k)}</span></div>' for k, v in stats)
 
     warn = ""
+    if report.get("skipped"):
+        warn += (f'<p class="sub" style="color:var(--medium)"><b>Stopped early.</b> '
+                 f'{e(report["skipped"])} vectors were never run, so this is a subset '
+                 f'of the suite rather than a full scan.</p>')
     if report.get("errors") or report.get("blank"):
         warn = (f'<p class="sub" style="color:var(--medium)"><b>Incomplete.</b> '
                 f'{e(report.get("errors", 0))} vectors errored and '
@@ -193,6 +198,9 @@ def markdown(rep: dict, title: str = "LRTF scan") -> str:
         f"**{rep['risk']}** · {rep['vulnerable']}/{rep['total']} vectors bypassed "
         f"({s['high']} high · {s['medium']} medium · {s['low']} low)",
     ]
+    if rep.get("skipped"):
+        out += ["", f"> **Stopped early.** {rep['skipped']} vectors were never run; "
+                    f"this is a subset of the suite."]
     if rep.get("errors") or rep.get("blank"):
         out += ["", f"> **Incomplete.** {rep.get('errors', 0)} errored, "
                     f"{rep.get('blank', 0)} returned nothing. Neither counts as held, "
