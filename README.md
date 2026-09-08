@@ -552,6 +552,9 @@ lrtf scan gpt-4o
 lrtf scan anthropic/claude-sonnet-4-5
 lrtf scan ollama/llama3
 
+# what will this actually cost? nothing is sent
+lrtf scan gpt-4o --dry-run
+
 # narrow the scan
 lrtf scan gpt-4o -c jailbreak -c encoding_bypass
 lrtf scan gpt-4o --severity high
@@ -614,6 +617,36 @@ means something when the vectors actually executed.
 
 Credentials come from the environment, the same names litellm expects
 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …).
+
+### Check before you spend
+
+`--dry-run` resolves every option, prints what the run would be, and stops
+without sending anything:
+
+```
+$ lrtf scan groq/openai/gpt-oss-20b --rpm 9 --workers 2 --dry-run
+model       groq/openai/gpt-oss-20b
+system      default (canary planted)
+vectors     300  (85H 149M 66L)
+requests    329
+categories  10  encoding_bypass, excessive_agency, improper_output_handling, …
+pacing      --rpm 9 --workers 2  →  ~37 min
+```
+
+**300 vectors is 329 requests** — twelve vectors are multi-turn and bill per
+turn, and `--repeat 5` makes it 1,645. That number decides whether a scan fits
+inside a metered free tier, and it is not one you can do in your head. It runs
+after parsing, so a malformed `--header` or an unusable `--system` file fails
+here rather than on the run that spends the quota.
+
+### Shell completion
+
+```bash
+lrtf --install-completion
+```
+
+Completes category names and the 300 vector ids for `--category`, `--id` and
+`--exclude`.
 
 ### Test your own system prompt
 
