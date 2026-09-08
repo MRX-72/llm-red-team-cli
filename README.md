@@ -546,6 +546,9 @@ evidence that anything was repaired.
 
 ## Usage
 
+> Every flag, both file formats and the practices that keep a scan honest are in
+> the **[user manual](MANUAL.md)**.
+
 ```bash
 # any provider litellm supports
 lrtf scan gpt-4o
