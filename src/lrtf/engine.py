@@ -118,6 +118,56 @@ class Result:
         return d
 
 
+# Which built-in detectors consume `match`. A custom detector may need no
+# match value at all -- a Luhn check, a schema validator -- so the "needs a
+# match" rule is keyed off this set rather than "anything that is not canary".
+NEEDS_MATCH = {"contains", "regex", "absent", "repetition"}
+
+DETECTOR_MODULE = "lrtf_detectors.py"
+
+
+def load_detectors(paths: Iterable[str]) -> list[str]:
+    """Register detectors from `lrtf_detectors.py` in each vector directory.
+
+    Same idea as pytest's conftest.py: the file lives beside the vectors that
+    need it, so there is no flag to remember and every command picks it up
+    through the one path that already loads vectors.
+
+    The module must expose a DETECTORS dict of name -> callable, where the
+    callable takes (response, vector, canary) and returns the matched evidence
+    string, or "" when the target held. Custom detectors are checked against
+    the refusal corpus by `lrtf lint` exactly like the built-in ones.
+
+    This imports and executes Python from a directory you named. That is the
+    nature of a plugin; point it only at code you trust.
+    """
+    import importlib.util
+
+    added: list[str] = []
+    for d in paths:
+        path = os.path.join(d, DETECTOR_MODULE)
+        if not os.path.isfile(path):
+            continue
+        spec = importlib.util.spec_from_file_location(
+            f"lrtf_detectors_{abs(hash(path))}", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        table = getattr(module, "DETECTORS", None)
+        if not isinstance(table, dict):
+            raise ValueError(f"{path}: expected a DETECTORS dict")
+        for name, fn in table.items():
+            if not callable(fn):
+                raise ValueError(f"{path}: detector {name!r} is not callable")
+            if name in BUILTIN_DETECTORS:
+                raise ValueError(
+                    f"{path}: {name!r} is a built-in detector — pick another "
+                    f"name rather than silently changing what every vector "
+                    f"using it means")
+            DETECTORS[name] = fn
+            added.append(name)
+    return added
+
+
 def load_vectors(
     path: str | Iterable[str] = VECTOR_DIR,
     categories: Iterable[str] | None = None,
@@ -131,6 +181,7 @@ def load_vectors(
     means you never have to fork this repo to run private vectors alongside it.
     """
     paths = [path] if isinstance(path, (str, os.PathLike)) else list(path)
+    load_detectors(str(d) for d in paths)
     files = [f for d in paths for f in sorted(glob.glob(os.path.join(d, "*.yaml")))]
     if not files:
         raise ValueError(f"no .yaml vector files found in {paths}")
@@ -298,6 +349,9 @@ def detect_repetition(response: str, vector: Vector, canary: str) -> str:
     return f"{hits} repetitions ({len(response)} chars)" if hits >= vector.min_hits else ""
 
 
+# The registry is open on purpose. A detector is any callable with this
+# signature, so a leak that is not a string match -- a JSON shape, a checksum,
+# a lookup against your own inventory -- does not require forking this repo.
 DETECTORS = {
     "canary": detect_canary,
     "contains": detect_contains,
@@ -305,6 +359,11 @@ DETECTORS = {
     "absent": detect_absent,
     "repetition": detect_repetition,
 }
+
+# Snapshotted before any plugin can add to the registry: the shadowing check in
+# load_detectors has to mean "shipped with lrtf", not "already registered", or
+# loading the same plugin twice in one process reports it as shadowing itself.
+BUILTIN_DETECTORS = frozenset(DETECTORS)
 
 
 def evaluate(response: str, vector: Vector, canary: str) -> str:
