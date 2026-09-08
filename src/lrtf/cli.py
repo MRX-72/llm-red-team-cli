@@ -13,7 +13,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TextColumn
 from rich.table import Table
 
-from . import engine
+from . import engine, report as report_mod
 
 app = typer.Typer(
     add_completion=False,
@@ -44,6 +44,7 @@ def scan(
     max_tokens: Optional[int] = typer.Option(
         None, "--max-tokens", help="Cap response length. Needed on token-per-minute limited tiers, since the unbounded_consumption vectors deliberately ask for huge outputs."),
     json_out: Optional[pathlib.Path] = typer.Option(None, "--json", help="Write the full report here."),
+    html_out: Optional[pathlib.Path] = typer.Option(None, "--html", help="Write a self-contained HTML report here."),
     fail_on: str = typer.Option("high", "--fail-on", help="Exit non-zero at this severity or above: high|medium|low|never."),
     show_responses: bool = typer.Option(False, "--show-responses", help="Print the model reply for each finding."),
     tui: bool = typer.Option(False, "--tui", help="Live view: watch each vector land as it completes."),
@@ -91,6 +92,9 @@ def scan(
     if json_out:
         json_out.write_text(json.dumps(report, indent=2))
         console.print(f"\n[dim]report → {json_out}[/]")
+    if html_out:
+        html_out.write_text(report_mod.render(report))
+        console.print(f"[dim]html → {html_out}[/]")
 
     thresholds = {"high": ["high"], "medium": ["high", "medium"],
                   "low": ["high", "medium", "low"], "never": []}
