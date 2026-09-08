@@ -15,6 +15,28 @@ from rich.table import Table
 
 from . import engine, lint as lint_mod, report as report_mod
 
+def _load_report(path: pathlib.Path) -> dict:
+    """Read a report, failing with a message rather than a traceback.
+
+    These files are passed by hand and by CI, so a typo'd path or a truncated
+    write is routine, not exceptional.
+    """
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        console.print(f"[red]no such report: {path}[/]")
+        raise typer.Exit(2)
+    except json.JSONDecodeError as exc:
+        console.print(f"[red]{path} is not valid JSON: {exc}[/]")
+        raise typer.Exit(2)
+    missing = {"model", "canary", "findings"} - set(data)
+    if missing:
+        console.print(f"[red]{path} is missing {', '.join(sorted(missing))} — "
+                      f"is it an lrtf report?[/]")
+        raise typer.Exit(2)
+    return data
+
+
 app = typer.Typer(
     add_completion=False,
     help="Adversarial test harness for LLM applications.",
@@ -80,7 +102,7 @@ def scan(
     # errored or came back blank was never really tested, so it is not "done".
     resumed: list = []
     if resume:
-        prior = json.loads(resume.read_text())
+        prior = _load_report(resume)
         resumed = [engine.result_from_dict(f) for f in prior["findings"]
                 if not f["error"] and "".join(f.get("replies") or [f["response"]]).strip()]
         canary = canary or prior.get("canary")
@@ -142,7 +164,8 @@ def scan(
     results_ = sorted(resumed + list(results_),
                       key=lambda r: (engine.SEVERITY_ORDER.get(r.vector.severity, 9),
                                      r.vector.id))
-    report = engine.summarise(results_, model, canary)
+    report = engine.summarise(results_, model, canary,
+                              requested=len(resumed) + len(vectors))
     if quiet:
         s = report["by_severity"]
         console.print(f"{report['risk']}  {report['vulnerable']}/{report['total']} "
@@ -295,7 +318,8 @@ def compare(
         results, canary = engine.run_scan(
             model, vectors, system=custom, workers=workers, rpm=rpm,
             repeat=repeat, temperature=temperature, **extra)
-        reports[model] = engine.summarise(results, model, canary)
+        reports[model] = engine.summarise(results, model, canary,
+                                          requested=len(vectors))
 
     # Only vectors that got through somewhere are worth a row.
     interesting = [v for v in vectors
@@ -361,7 +385,7 @@ def verify(
     drifted = 0
 
     for path in reports:
-        rep = json.loads(path.read_text())
+        rep = _load_report(path)
         gained, lost, gone = [], [], []
         for f in rep["findings"]:
             vid = f["vector"]["id"]
@@ -468,7 +492,7 @@ def diff(
     you made to it actually worked, which is the question anyone maintaining a
     system prompt asks second.
     """
-    a, b = (json.loads(p.read_text()) for p in (baseline, current))
+    a, b = (_load_report(p) for p in (baseline, current))
     old = {f["vector"]["id"]: f for f in a["findings"]}
     new = {f["vector"]["id"]: f for f in b["findings"]}
 
@@ -578,7 +602,9 @@ def _render(report: dict, show_responses: bool) -> None:
         + (f"\n[yellow]{len(errors)} of {report['total']} vectors errored — this is not a clean result.[/]"
            f"\n[dim]On a free tier, retry with --rpm 10.[/]" if errors else "")
         + (f"\n[yellow]{report['blank']} vectors returned an empty response — not counted as held.[/]"
-           if report.get("blank") else ""),
+           if report.get("blank") else "")
+        + (f"\n[yellow]stopped early: {report['skipped']} vectors were never run.[/]"
+           if report.get("skipped") else ""),
         border_style=RISK_COLOR.get(report["risk"], "white").split()[-1],
         title="Risk"))
 

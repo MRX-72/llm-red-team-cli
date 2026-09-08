@@ -143,3 +143,46 @@ def test_verify_reproduces_the_published_numbers():
                 if not f["error"] and f["response"].strip()
                 and f["vector"]["id"] in vecs)
         assert n == expected[name], f"{name}: re-scored {n}, README says {expected[name]}"
+
+
+# --- malformed input -------------------------------------------------------
+# These files are passed by hand and by CI, so a typo'd path or a truncated
+# write is routine. A traceback is not an acceptable response to either.
+
+def test_missing_file_is_a_clean_error(tmp_path):
+    r = runner.invoke(app, ["verify", str(tmp_path / "nope.json")])
+    assert r.exit_code == 2
+    assert "no such report" in r.output
+    assert r.exception is None or isinstance(r.exception, SystemExit)
+
+
+def test_malformed_json_is_a_clean_error(tmp_path):
+    p = tmp_path / "bad.json"
+    p.write_text("{not json")
+    r = runner.invoke(app, ["verify", str(p)])
+    assert r.exit_code == 2
+    assert "not valid JSON" in r.output
+
+
+def test_json_that_is_not_a_report_is_a_clean_error(tmp_path):
+    p = tmp_path / "other.json"
+    p.write_text('{"hello": "world"}')
+    r = runner.invoke(app, ["verify", str(p)])
+    assert r.exit_code == 2
+    assert "is it an lrtf report" in r.output
+
+
+def test_resume_on_a_malformed_report_is_a_clean_error(tmp_path):
+    p = tmp_path / "bad.json"
+    p.write_text("{nope")
+    r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "--resume", str(p)])
+    assert r.exit_code == 2
+    assert "not valid JSON" in r.output
+
+
+def test_diff_on_a_malformed_report_is_a_clean_error(tmp_path):
+    good = report(tmp_path, "g.json", [finding("jb-003", True, "x")])
+    bad = tmp_path / "bad.json"
+    bad.write_text("{nope")
+    r = runner.invoke(app, ["diff", str(good), str(bad)])
+    assert r.exit_code == 2
