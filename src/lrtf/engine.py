@@ -103,14 +103,23 @@ class Throttle:
         self._last = 0.0
 
     def wait(self) -> None:
+        """Reserve this request's slot, then sleep to it.
+
+        The reservation happens under the lock; the sleep does not. Holding the
+        lock across the sleep also worked -- it serialised the workers -- but it
+        made a thread that had just been rate-limited wait up to a full gap
+        (MAX_GAP, 30s) to report it, so the backoff landed a slot late. It also
+        stopped workers overlapping their waits, which is the whole point of
+        having more than one.
+        """
         with self._lock:
-            gap = self.gap
-            if not gap:
+            if not self.gap:
                 return
-            delay = self._last + gap - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
-            self._last = time.monotonic()
+            start = max(time.monotonic(), self._last + self.gap)
+            self._last = start
+        delay = start - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
 
     def penalise(self, retry_after: float = 0.0) -> float:
         """Widen the gap after a rate limit. Returns how long to sleep now."""
