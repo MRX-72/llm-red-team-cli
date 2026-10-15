@@ -31,7 +31,8 @@ def _load_report(path: pathlib.Path) -> dict:
     except json.JSONDecodeError as exc:
         console.print(f"[red]{path} is not valid JSON: {exc}[/]")
         raise typer.Exit(2)
-    missing = {"model", "canary", "findings"} - set(data)
+    missing = ({"model", "canary", "findings"} - set(data)
+               if isinstance(data, dict) else {"model", "canary", "findings"})
     if missing:
         console.print(f"[red]{path} is missing {', '.join(sorted(missing))} — "
                       f"is it an lrtf report?[/]")

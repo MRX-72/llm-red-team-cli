@@ -183,6 +183,14 @@ def test_json_that_is_not_a_report_is_a_clean_error(tmp_path):
     assert "is it an lrtf report" in flat(r.output)
 
 
+def test_json_that_is_not_an_object_is_a_clean_error(tmp_path):
+    p = tmp_path / "list.json"
+    p.write_text("[1, 2, 3]")
+    r = runner.invoke(app, ["verify", str(p)])
+    assert r.exit_code == 2
+    assert "is it an lrtf report" in flat(r.output)
+
+
 def test_resume_on_a_malformed_report_is_a_clean_error(tmp_path):
     p = tmp_path / "bad.json"
     p.write_text("{nope")
