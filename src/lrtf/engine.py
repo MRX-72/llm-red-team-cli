@@ -299,7 +299,8 @@ def load_vectors(
                     f"{os.path.basename(file)}[{i}] "
                     f"(id {raw.get('id', '?')}): {exc}") from None
             if v.id in seen:
-                raise ValueError(f"duplicate vector id: {v.id}")
+                raise ValueError(f"{os.path.basename(file)}[{i}]: "
+                                 f"duplicate vector id {v.id}")
             if v.detect not in DETECTORS:
                 raise ValueError(f"{v.id}: unknown detector {v.detect!r}")
             if v.detect in ("regex", "repetition") and not isinstance(v.match, str):
