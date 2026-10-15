@@ -11,6 +11,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
       - run: pip install -e ".[dev]"
       - run: pytest -q
       - run: lrtf vectors   # the suite must parse on every supported version
