@@ -454,7 +454,7 @@ def compare(
             if f["error"]:
                 row.append("[dim]![/]")
             elif f["vulnerable"]:
-                rate = f"[red]✗[/]" if f.get("runs", 1) == 1 else f"[red]✗ {f['hits']}/{f['runs']}[/]"
+                rate = "[red]✗[/]" if f.get("runs", 1) == 1 else f"[red]✗ {f['hits']}/{f['runs']}[/]"
                 row.append(rate)
             else:
                 row.append("[green]✓[/]")
