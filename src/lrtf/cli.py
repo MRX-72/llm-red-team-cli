@@ -16,6 +16,7 @@ from rich.table import Table
 
 from . import buffs as buffs_mod, engine, lint as lint_mod, report as report_mod
 
+
 def _load_report(path: pathlib.Path) -> dict:
     """Read a report, failing with a message rather than a traceback.
 
