@@ -155,6 +155,14 @@ def scan(
     tui: bool = typer.Option(False, "--tui", help="Live view: watch each vector land as it completes."),
 ):
     """Run the adversarial suite against a model and report what got through."""
+    # Checked before anything is sent: a typo here used to surface only after
+    # the whole suite had been paid for.
+    thresholds = {"high": ["high"], "medium": ["high", "medium"],
+                  "low": ["high", "medium", "low"], "never": []}
+    if fail_on not in thresholds:
+        console.print(f"[red]--fail-on must be one of {list(thresholds)}[/]")
+        raise typer.Exit(2)
+
     source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
     try:
         vectors = engine.load_vectors(source, categories=category, severities=severity,
@@ -277,12 +285,6 @@ def scan(
         md_out.write_text(report_mod.markdown(report))
         if not quiet:
             console.print(f"[dim]markdown → {md_out}[/]")
-
-    thresholds = {"high": ["high"], "medium": ["high", "medium"],
-                  "low": ["high", "medium", "low"], "never": []}
-    if fail_on not in thresholds:
-        console.print(f"[red]--fail-on must be one of {list(thresholds)}[/]")
-        raise typer.Exit(2)
 
     gating = [f for f in report["findings"] if f["vulnerable"]]
     if baseline:

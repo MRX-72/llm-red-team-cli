@@ -420,3 +420,12 @@ def test_baseline_rejects_a_file_that_is_not_a_report(tmp_path, monkeypatch):
     r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "--baseline", str(bad)])
     assert r.exit_code == 2
     assert "is it an lrtf report" in flat(r.output)
+
+
+def test_bad_fail_on_is_rejected_before_any_request(monkeypatch):
+    sent = []
+    monkeypatch.setattr(engine, "probe", lambda *a, **k: sent.append(1) or HELD)
+    r = runner.invoke(app, ["scan", "m", "--id", "jb-003", "--fail-on", "hgih"])
+    assert r.exit_code == 2
+    assert "--fail-on must be one of" in flat(r.output)
+    assert not sent
