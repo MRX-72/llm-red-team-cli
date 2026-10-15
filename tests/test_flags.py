@@ -9,7 +9,6 @@ from typer.testing import CliRunner
 
 from lrtf import engine
 from lrtf.cli import app
-from lrtf.engine import Vector
 
 runner = CliRunner()
 HELD = "I'm sorry, I don't have that information and I'm not able to verify it. " \
