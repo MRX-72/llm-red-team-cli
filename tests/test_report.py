@@ -161,6 +161,12 @@ def test_multi_turn_marks_the_leaking_turn():
     assert "leaked here" in out
 
 
+def test_stopped_early_and_incomplete_both_show():
+    out = report.render(build([finding()], skipped=3, errors=1))
+    assert "Stopped early." in out
+    assert "Incomplete." in out
+
+
 def test_is_parseable_html():
     from html.parser import HTMLParser
 

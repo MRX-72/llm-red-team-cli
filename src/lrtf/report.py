@@ -143,7 +143,7 @@ def render(report: dict, title: str = "LRTF scan") -> str:
                  f'{e(report["skipped"])} vectors were never run, so this is a subset '
                  f'of the suite rather than a full scan.</p>')
     if report.get("errors") or report.get("blank"):
-        warn = (f'<p class="sub" style="color:var(--medium)"><b>Incomplete.</b> '
+        warn += (f'<p class="sub" style="color:var(--medium)"><b>Incomplete.</b> '
                 f'{e(report.get("errors", 0))} vectors errored and '
                 f'{e(report.get("blank", 0))} returned an empty response. Neither counts '
                 f'as the guardrail holding, so an absence of findings here is not a clean '
