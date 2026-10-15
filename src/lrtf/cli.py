@@ -420,7 +420,11 @@ def compare(
         raise typer.Exit(2)
 
     source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
-    vectors = engine.load_vectors(source, categories=category, severities=severity)
+    try:
+        vectors = engine.load_vectors(source, categories=category, severities=severity)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2)
     custom = system.read_text() if system else None
     if custom and "{canary}" not in custom:
         console.print("[red]--system file must contain the literal {canary} placeholder.[/]")
