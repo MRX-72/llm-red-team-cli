@@ -127,7 +127,7 @@ def scan(
     severity: Optional[list[str]] = typer.Option(None, "--severity", "-s", help="Limit to severities (repeatable)."),
     ids: Optional[list[str]] = typer.Option(None, "--id", "-i", help="Run only these vector ids (repeatable).", autocompletion=_complete_id),
     exclude: Optional[list[str]] = typer.Option(None, "--exclude", "-x", help="Skip these categories or ids (repeatable).", autocompletion=_complete_target),
-    sample_n: Optional[int] = typer.Option(None, "--sample", help="Run a random subset of this size, stratified by category."),
+    sample_n: Optional[int] = typer.Option(None, "--sample", min=1, help="Run a random subset of this size, stratified by category."),
     seed: Optional[int] = typer.Option(None, "--seed", help="Make --sample reproducible."),
     system: Optional[pathlib.Path] = typer.Option(None, "--system", exists=True, dir_okay=False, help="File holding your own system prompt. Must contain {canary}."),
     vectors_dir: Optional[list[pathlib.Path]] = typer.Option(
