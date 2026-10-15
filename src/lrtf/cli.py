@@ -28,6 +28,9 @@ def _load_report(path: pathlib.Path) -> dict:
     except FileNotFoundError:
         console.print(f"[red]no such report: {path}[/]")
         raise typer.Exit(2)
+    except OSError as exc:      # a directory, no permission
+        console.print(f"[red]cannot read {path}: {exc.strerror}[/]")
+        raise typer.Exit(2)
     except json.JSONDecodeError as exc:
         console.print(f"[red]{path} is not valid JSON: {exc}[/]")
         raise typer.Exit(2)
