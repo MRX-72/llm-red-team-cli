@@ -321,7 +321,11 @@ def vectors(
     for col in ("ID", "SEVERITY", "CATEGORY", "TURNS", "TITLE"):
         table.add_column(col)
     source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
-    vs = engine.load_vectors(source, categories=category)
+    try:
+        vs = engine.load_vectors(source, categories=category)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2)
     for v in vs:
         n = len(v.messages)
         table.add_row(v.id, f"[{SEV_COLOR.get(v.severity,'white')}]{v.severity}[/]",
