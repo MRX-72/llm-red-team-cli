@@ -36,6 +36,7 @@ dev = ["pytest>=8.0"]
 [project.urls]
 Homepage = "https://github.com/MRX-72/llm-red-team-cli"
 Issues = "https://github.com/MRX-72/llm-red-team-cli/issues"
+Documentation = "https://github.com/MRX-72/llm-red-team-cli/blob/main/MANUAL.md"
 
 [project.scripts]
 lrtf = "lrtf.cli:app"
