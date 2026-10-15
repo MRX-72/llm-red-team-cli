@@ -504,7 +504,11 @@ def verify(
     stored response, so re-running it offline is exact rather than an estimate.
     """
     source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
-    vecs = {v.id: v for v in engine.load_vectors(source)}
+    try:
+        vecs = {v.id: v for v in engine.load_vectors(source)}
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2)
     drifted = 0
 
     for path in reports:
