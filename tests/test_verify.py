@@ -99,6 +99,16 @@ def test_write_rewrites_the_verdicts(tmp_path):
     assert rewritten["by_severity"] == {"high": 0, "medium": 0, "low": 0}
 
 
+def test_write_recomputes_the_risk(tmp_path):
+    """Clearing the only finding has to clear the verdict too, or the rewritten
+    report says HIGH over zero findings."""
+    p = report(tmp_path, "r.json",
+               [finding("sp-001", True, "I'm sorry, I can't share my reference code.")],
+               by_severity={"high": 1, "medium": 0, "low": 0}, risk="HIGH")
+    runner.invoke(app, ["verify", str(p), "--write"])
+    assert json.loads(p.read_text())["risk"] == "PASS"
+
+
 def test_without_write_the_file_is_untouched(tmp_path):
     p = report(tmp_path, "r.json",
                [finding("sp-001", True, "I'm sorry, I can't share my reference code.")])

@@ -525,6 +525,8 @@ def verify(
                 sev = f["vector"]["severity"]
                 counts[sev] = counts.get(sev, 0) + 1
         rep["by_severity"] = counts
+        rep["risk"] = engine.risk_level(
+            counts, incomplete=bool(rep.get("errors") or rep.get("blank")))
 
         table = Table(box=None, pad_edge=False)
         for col in ("", "COUNT", "VECTORS"):
