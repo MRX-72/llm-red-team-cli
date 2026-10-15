@@ -509,13 +509,14 @@ def verify(
                 continue
             if f["error"] or not "".join(f.get("replies") or [f["response"]]).strip():
                 continue          # never tested; not ours to re-judge
-            now = bool(engine.evaluate(f["response"], vecs[vid], rep["canary"]))
+            evidence = engine.evaluate(f["response"], vecs[vid], rep["canary"])
+            now = bool(evidence)
             if now and not f["vulnerable"]:
                 gained.append(vid)
             elif f["vulnerable"] and not now:
                 lost.append(vid)
             f["vulnerable"] = now
-            f["evidence"] = engine.evaluate(f["response"], vecs[vid], rep["canary"])
+            f["evidence"] = evidence
 
         rep["vulnerable"] = sum(f["vulnerable"] for f in rep["findings"])
         counts = {"high": 0, "medium": 0, "low": 0}
