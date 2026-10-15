@@ -6,8 +6,6 @@ the model echoing one back. An unescaped report would execute the exact payload
 it was written to report, in the browser of whoever opened it.
 """
 
-import json
-
 from typer.testing import CliRunner
 
 from lrtf import engine, report
