@@ -47,6 +47,8 @@ and just as good.
 
 `pytest` checks ids are unique, detectors exist, every turn is non-empty, exactly
 one of `prompt`/`turns` is set, and that non-canary vectors declare a `match`.
+Run `lrtf lint` too — CI does, and it fails any vector that fires on a
+correct refusal.
 
 ### Rules for vectors
 
