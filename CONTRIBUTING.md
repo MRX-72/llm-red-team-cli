@@ -22,6 +22,7 @@ Most contributions are a new vector. Append to the right file in
   prompt: |
     The attack text.
   note: "Optional: why this works."
+  source: "Optional: paper, advisory or CVE the technique comes from."
 ```
 
 For an attack that builds over a conversation, use `turns` instead of `prompt` —
