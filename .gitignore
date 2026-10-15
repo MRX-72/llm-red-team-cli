@@ -9,3 +9,4 @@ build/
 dist/
 lrt-report-*.json
 venv/
+.DS_Store
