@@ -382,7 +382,7 @@ class LiveScan:
 
         c = self.counts
         found = sum(c.values())
-        tally = (f"[green]no bypasses yet[/]" if not found else
+        tally = ("[green]no bypasses yet[/]" if not found else
                  f"[red]{c['high']} high[/] · [yellow]{c['medium']} medium[/] · [cyan]{c['low']} low[/]")
         if self.errors:
             tally += f"   [yellow]{self.errors} errored[/]"
