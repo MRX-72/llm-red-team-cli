@@ -345,7 +345,7 @@ def sample(vectors: list[Vector], n: int, seed: int | None = None) -> list[Vecto
         by_cat.setdefault(v.category, []).append(v)
 
     picked: list[Vector] = []
-    for cat, group in sorted(by_cat.items()):
+    for _, group in sorted(by_cat.items()):
         take = max(1, round(n * len(group) / len(vectors)))
         picked += rng.sample(group, min(take, len(group)))
     rng.shuffle(picked)
