@@ -5,7 +5,6 @@ those exact vectors and assert the linter would have caught them — a lint rule
 with no failing case is a rule that could silently stop working.
 """
 
-import pytest
 from typer.testing import CliRunner
 
 from lrtf import engine, lint
