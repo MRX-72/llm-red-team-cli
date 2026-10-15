@@ -129,7 +129,7 @@ def scan(
     exclude: Optional[list[str]] = typer.Option(None, "--exclude", "-x", help="Skip these categories or ids (repeatable).", autocompletion=_complete_target),
     sample_n: Optional[int] = typer.Option(None, "--sample", help="Run a random subset of this size, stratified by category."),
     seed: Optional[int] = typer.Option(None, "--seed", help="Make --sample reproducible."),
-    system: Optional[pathlib.Path] = typer.Option(None, "--system", help="File holding your own system prompt. Must contain {canary}."),
+    system: Optional[pathlib.Path] = typer.Option(None, "--system", exists=True, dir_okay=False, help="File holding your own system prompt. Must contain {canary}."),
     vectors_dir: Optional[list[pathlib.Path]] = typer.Option(
         None, "--vectors", help="Load vectors from these directories instead of the built-in suite (repeatable)."),
     buff: Optional[list[str]] = typer.Option(
