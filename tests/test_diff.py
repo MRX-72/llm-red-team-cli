@@ -3,7 +3,6 @@ calling an errored vector fixed -- would make it worse than useless."""
 
 import json
 
-import pytest
 from conftest import flat
 from typer.testing import CliRunner
 
