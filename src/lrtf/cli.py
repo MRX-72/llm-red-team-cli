@@ -522,7 +522,8 @@ def verify(
         counts = {"high": 0, "medium": 0, "low": 0}
         for f in rep["findings"]:
             if f["vulnerable"]:
-                counts[f["vector"]["severity"]] += 1
+                sev = f["vector"]["severity"]
+                counts[sev] = counts.get(sev, 0) + 1
         rep["by_severity"] = counts
 
         table = Table(box=None, pad_edge=False)
