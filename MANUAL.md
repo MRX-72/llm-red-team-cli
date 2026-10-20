@@ -300,6 +300,8 @@ The ladder advances in ascending order of bypass pressure:
 - **Unbuffable vectors never escalate:** Vectors using `detect: absent` are never escalated, as prompt obfuscation could manufacture false-positive missing-hedge findings.
 - **Payload-sensitive:** If a buff cannot carry a payload (such as `tags` with non-ASCII text), that level is skipped and escalation advances to the next rung.
 - **Multi-turn safe:** Like buffs, multi-turn vectors are escalated on the final turn only.
+- **Only past a real answer:** A vector whose vanilla attempt errored is not escalated. It never tested the guardrail, and a bad key would otherwise cost one doomed request per level.
+- **hits/runs describe the level that leaked:** A `+rot13` finding under `--repeat 3` reads `2/3` if two of the three rot13 attempts leaked. Attempts on earlier levels are billed and counted in `requests`, not in that ratio.
 - **Findings name their breaking point:** Findings are marked with their breaking transformation (e.g. `+base64`, `+rot13`), showing exactly how much pressure was needed to bypass defenses.
 
 ### 4.2 Testing your own system prompt
