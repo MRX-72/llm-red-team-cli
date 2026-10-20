@@ -94,11 +94,10 @@ def _dry_run(model, vectors, repeat, rpm, workers, system, resumed: int, escalat
     cats = sorted({v.category for v in vectors})
     sev = {s: sum(v.severity == s for v in vectors) for s in ("high", "medium", "low")}
 
+    ceiling = requests
     if escalate:
-        from . import buffs as buffs_mod
-        extra = buffs_mod.count_extra_requests(vectors, escalate) * repeat
-        max_requests = requests + extra
-        req_str = f"{requests}–{max_requests} (adaptive, up to {escalate} levels)"
+        ceiling += buffs_mod.count_extra_requests(vectors, escalate) * repeat
+        req_str = f"{requests}–{ceiling} (adaptive, up to {escalate} levels)"
         if repeat > 1:
             req_str += f"  ({repeat}x)"
     else:
@@ -113,15 +112,15 @@ def _dry_run(model, vectors, repeat, rpm, workers, system, resumed: int, escalat
         ("categories", f"{len(cats)}  " + ", ".join(cats)),
     ]
     if escalate:
-        from . import buffs as buffs_mod
         ladder_names = ", ".join(buffs_mod.ESCALATION_LADDER[:escalate])
         rows.insert(3, ("escalate", f"up to {escalate} levels ({ladder_names})"))
 
-    effective_reqs = (requests + buffs_mod.count_extra_requests(vectors, escalate) * repeat) if escalate else requests
     if rpm:
         # The throttle paces globally, so rpm is the binding constraint and the
         # estimate is a floor: it ignores latency past the gap and any retry.
-        mins = effective_reqs / rpm
+        # With --escalate it is the ceiling's floor: every held vector climbing
+        # every level.
+        mins = ceiling / rpm
         eta = f"{mins:.0f} min" if mins >= 1 else f"{mins * 60:.0f}s"
         suffix = " max" if escalate else ""
         rows.append(("pacing", f"--rpm {rpm} --workers {workers}  →  ~{eta}{suffix}"))
