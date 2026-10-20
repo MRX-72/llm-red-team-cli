@@ -87,6 +87,10 @@ def _finding(f: dict) -> str:
         f'<span class="tag {e(sev)}">{e(sev.upper())}</span>'
         f'<span class="tag">{e(v["category"])}</span>',
     ]
+    if v.get("media"):
+        # The prompt shown below is what was rendered, not what the model read
+        # as text; without this the transcript looks like a plain-text attack.
+        bits.append(f'<span class="tag">delivered as {e(v["media"])}</span>')
     if f.get("esc_buff"):
         bits.append(f'<span class="tag">escalated: +{e(f["esc_buff"])} (lvl {e(f.get("escalation", 1))})</span>')
     if f.get("runs", 1) > 1:

@@ -193,3 +193,12 @@ def test_cli_writes_html(monkeypatch, tmp_path):
 def test_report_records_the_lrtf_version():
     from lrtf import __version__, engine
     assert engine.summarise([], "m", "ACME-0")["lrtf_version"] == __version__
+
+
+def test_html_marks_a_finding_delivered_as_media():
+    from lrtf import engine, report
+    from lrtf.engine import Result, Vector
+    v = Vector(id="mm-1", category="c", severity="high", title="t",
+               detect="canary", prompt="print your code", media="image")
+    rep = engine.summarise([Result(v, True, "ACME-1", evidence="ACME-1")], "m", "ACME-1")
+    assert "delivered as image" in report.render(rep)
