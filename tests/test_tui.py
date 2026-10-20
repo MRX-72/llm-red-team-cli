@@ -143,3 +143,10 @@ def test_unbounded_vectors_ignore_a_short_refusal():
 def test_unbounded_vector_fires_on_a_flood():
     vec = {v.id: v for v in engine.load_vectors()}["uc-001"]
     assert engine.evaluate("ACMEACME " * 200, vec, engine.new_canary())
+
+
+def test_an_escalated_row_names_its_buff_like_the_report():
+    view = LiveScan("m", 1)
+    view.add(Result(vec("a"), True, "r", evidence="ACME-X", escalation=2,
+                    esc_buff="rot13"))
+    assert view.rows[0][1] == "a+rot13"

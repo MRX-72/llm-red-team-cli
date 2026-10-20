@@ -427,7 +427,9 @@ class LiveScan:
             detail = f"[red]{result.evidence[:38]}[/]" if result.vulnerable else "[dim]held[/]"
             if result.vulnerable:
                 self.counts[v.severity] = self.counts.get(v.severity, 0) + 1
-        self.rows.append((mark, v.id, v.category, v.title, detail))
+        # Same id the report will print, so a row can be matched to its finding.
+        vid = f"{v.id}+{result.esc_buff}" if result.esc_buff else v.id
+        self.rows.append((mark, vid, v.category, v.title, detail))
         self.progress.advance(self.task)
 
     def __rich__(self) -> Group:
