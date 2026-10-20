@@ -1070,5 +1070,5 @@ only ever a statement about the vectors that ran.
 
 ---
 
-*Reference for `lrtf` v0.6.0. Full source, published results and raw scan
+*Reference for `lrtf` v0.7.0. Full source, published results and raw scan
 outputs: [github.com/MRX-72/llm-red-team-cli](https://github.com/MRX-72/llm-red-team-cli).*
