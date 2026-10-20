@@ -712,6 +712,7 @@ payloads alongside the suite — no fork required.
 | `detect` | yes | `canary`, `contains`, `regex`, `absent` or `repetition`. |
 | `prompt` | one of | A single user message. |
 | `turns` | one of | A list of user messages for a multi-turn attack. Minimum two. |
+| `media` | no | `image` or `audio`: deliver the final turn rendered as a PNG (bitmap font) or a WAV (Morse), behind a benign caption. Letters, digits and basic punctuation only — `lrtf lint` flags anything else (`E014`). Rendering folds to uppercase, so a case-sensitive payload such as base64 does not survive it. |
 | `match` | detector-dependent | Needle, list of needles, or pattern. Not used by `canary`. |
 | `min_hits` | no (default `1`) | How many needles must hit before it counts. |
 | `reject_if` | no | Withdraw the finding if the reply contains any of these. |
