@@ -778,6 +778,32 @@ Both are the same rule: a prompt that cannot possibly work would still get a
 reply, and that reply would score as **held**. A silent false pass is the one
 result this tool refuses to produce.
 
+### Adaptive escalation
+
+While `--buff` applies transformations across all vectors upfront, `--escalate N`
+tests **depth adaptively**: each vector is attempted vanilla first. If the model
+holds, it retries through progressively stronger transformations from an
+ordered ladder, stopping as soon as a level breaches the guardrail:
+
+```bash
+lrtf scan gpt-4o --escalate 3
+```
+
+The escalation ladder advances in order of bypass pressure:
+
+| Level | Buff | Attack mechanism |
+|---|---|---|
+| 1 | `base64` | Base64-wrapped instruction |
+| 2 | `rot13` | ROT13 cipher wrapper |
+| 3 | `leet` | Leetspeak character substitutions |
+| 4 | `prefix` | Affirmative continuation forcing ("Certainly!...") |
+| 5 | `manyshot` | In-context compliance demonstration |
+| 6 | `tags` | Steganographic invisible Unicode Tags |
+
+- **Deterministic:** Pure seeded transformations without LLM judges in the loop.
+- **Adaptive request cost:** A model failing at vanilla stops immediately without extra calls; resilient vectors are tested deeper. `--dry-run` displays the exact request ceiling.
+- **Breaking markers:** Findings report the exact level and buff that broke through (e.g. `+base64`, `+rot13`).
+
 Every other detector reads the *response*, so rewriting the prompt cannot change
 what counts as evidence — the canary either came back or it did not. A buffed
 vector's `source` records the composition, so a buffed copy never claims the

@@ -190,6 +190,8 @@ class Result:
     turn: int = 0          # 1-based turn that produced the finding, 0 if none
     runs: int = 1          # how many times the vector was attempted
     hits: int = 1          # how many of those leaked
+    escalation: int = 0    # 0 = vanilla, 1..N = buff level that leaked
+    esc_buff: str = ""     # the buff name, for rendering
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -372,6 +374,8 @@ def result_from_dict(d: dict) -> Result:
         evidence=d.get("evidence", ""), error=d.get("error", ""),
         replies=d.get("replies", []), turn=d.get("turn", 0),
         runs=d.get("runs", 1), hits=d.get("hits", 1),
+        escalation=d.get("escalation", 0),
+        esc_buff=d.get("esc_buff", ""),
     )
 
 
@@ -626,6 +630,7 @@ def run_scan(
     media: str = "",
     on_result=None,
     pacing: dict | None = None,
+    escalate: int = 0,
     **kw,
 ) -> tuple[list[Result], str]:
     if media not in ("", "image", "audio"):
@@ -635,6 +640,11 @@ def run_scan(
     # (a JSON example, a template) and .format() raised KeyError on them.
     system = (system or SYSTEM_PROMPT).replace("{canary}", canary)
     throttle = Throttle(rpm)
+
+    ladder: list[str] = []
+    if escalate > 0:
+        from . import buffs
+        ladder = buffs.ESCALATION_LADDER[:escalate]
 
     def attempt(v: Vector) -> Result:
         # litellm's num_retries handles transient network faults on its own
@@ -671,23 +681,52 @@ def run_scan(
     def one(v: Vector) -> Result | None:
         """Run the vector `repeat` times and fold the attempts into one result.
 
-        Returns None once fail_fast has tripped. Cancelling queued futures is not
-        enough on its own: a worker can drain the queue before the main thread
-        gets scheduled to cancel anything, so the stop flag is checked here,
-        before any request is paid for.
-
-        Guardrails are probabilistic: a framing that is refused once may land on
-        the next try. A single pass is an observation, not a rate. Any leak makes
-        the vector a finding, and `hits/runs` records how reliably it reproduces.
+        If escalate > 0 and the vector holds at vanilla, walk through the
+        escalation ladder until a transformation breaches the guardrail or the
+        ladder is exhausted.
         """
         if stop.is_set():
             return None
         attempts = [attempt(v) for _ in range(repeat)]
+        all_attempts = list(attempts)
         leaked = [r for r in attempts if r.vulnerable]
-        ran = [r for r in attempts if not r.error]
-        result = leaked[0] if leaked else (ran[-1] if ran else attempts[0])
-        result.runs = repeat
-        result.hits = len(leaked)
+
+        if leaked:
+            res = leaked[0]
+            res.runs = repeat
+            res.hits = len(leaked)
+            res.escalation = 0
+            res.esc_buff = ""
+            return res
+
+        if ladder and v.detect not in ("absent",):
+            from . import buffs
+            for lvl_idx, buff_name in enumerate(ladder, start=1):
+                if stop.is_set():
+                    return None
+                esc_v = buffs.apply_to_vector(v, buff_name, update_id=False)
+                if esc_v is None:
+                    continue
+
+                esc_attempts = [attempt(esc_v) for _ in range(repeat)]
+                all_attempts.extend(esc_attempts)
+                esc_leaked = [r for r in esc_attempts if r.vulnerable]
+
+                if esc_leaked:
+                    all_leaks = [r for r in all_attempts if r.vulnerable]
+                    res = esc_leaked[0]
+                    res.runs = len(all_attempts)
+                    res.hits = len(all_leaks)
+                    res.escalation = lvl_idx
+                    res.esc_buff = buff_name
+                    return res
+
+        ran = [r for r in all_attempts if not r.error]
+        result = ran[-1] if ran else all_attempts[0]
+        result.runs = len(all_attempts)
+        result.hits = 0
+        result.escalation = 0
+        result.esc_buff = ""
         return result
 
     # as_completed, not map: map yields in submission order, so one slow vector
@@ -740,9 +779,12 @@ def risk_level(counts: dict, incomplete: bool) -> str:
 def summarise(results: list[Result], model: str, canary: str,
               requested: int | None = None) -> dict:
     counts = {"high": 0, "medium": 0, "low": 0}
+    escalations: dict[str, int] = {}
     for r in results:
         if r.vulnerable:
             counts[r.vector.severity] = counts.get(r.vector.severity, 0) + 1
+            if r.esc_buff:
+                escalations[r.esc_buff] = escalations.get(r.esc_buff, 0) + 1
     errors = sum(bool(r.error) for r in results)
     # An empty completion is not evidence that the guardrail held -- the model
     # said nothing, often because a provider-side filter dropped the response.
@@ -767,4 +809,5 @@ def summarise(results: list[Result], model: str, canary: str,
         "by_severity": counts,
         "risk": risk,
         "findings": [r.to_dict() for r in results],
+        "escalations": escalations,
     }

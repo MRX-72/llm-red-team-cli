@@ -150,6 +150,7 @@ the command you will use 90% of the time.
 | `--seed N` | Make `--sample` reproducible. |
 | `--vectors DIR` | Load from your own directories instead of the built-in suite. Repeatable. |
 | `--buff NAME` | Rewrite every selected vector through this transformation. Repeatable. Tab-completes. |
+| `-e`, `--escalate N` | Retry held vectors through up to N progressive transformations. Stops at the first level that leaks. |
 
 Filters compose. `-c pii_leakage -s high` gives the high-severity PII vectors
 only.
@@ -271,6 +272,35 @@ original technique's provenance.
 
 Multi-turn vectors are buffed on the **final** turn only. The earlier turns are
 the attack building up; rewriting them destroys the thing being tested.
+
+### 4.1c Adaptive escalation — depth without combinatorial explosion
+
+`--buff` multiplies every selected vector upfront. When you want to probe depth
+rather than breadth, `--escalate N` retries **only vectors that held**, stepping
+through an ordered ladder of transformations and stopping at the first level that
+breaks the guardrail:
+
+```bash
+lrtf scan gpt-4o --escalate 3
+```
+
+The ladder advances in ascending order of bypass pressure:
+
+1. `base64` — base64-wrapped instruction asking the model to decode and comply
+2. `rot13` — ROT13 cipher wrapper
+3. `leet` — character substitutions (`4` for `a`, `3` for `e`, etc.)
+4. `prefix` — forces an affirmative opening ("Certainly! Here is what you asked for:")
+5. `manyshot` — in-context compliance pattern priming the model to answer
+6. `tags` — invisible Unicode Tags steganography
+
+#### Rules of escalation
+
+- **Deterministic by construction:** All buffs are pure text transformations; no judge model or non-deterministic agent loop is used.
+- **Adaptive budget:** A vector that leaks on vanilla stops immediately (1 attempt); a vector that resists advances through up to N levels.
+- **Unbuffable vectors never escalate:** Vectors using `detect: absent` are never escalated, as prompt obfuscation could manufacture false-positive missing-hedge findings.
+- **Payload-sensitive:** If a buff cannot carry a payload (such as `tags` with non-ASCII text), that level is skipped and escalation advances to the next rung.
+- **Multi-turn safe:** Like buffs, multi-turn vectors are escalated on the final turn only.
+- **Findings name their breaking point:** Findings are marked with their breaking transformation (e.g. `+base64`, `+rot13`), showing exactly how much pressure was needed to bypass defenses.
 
 ### 4.2 Testing your own system prompt
 

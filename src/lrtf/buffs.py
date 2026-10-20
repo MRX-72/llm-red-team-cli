@@ -18,6 +18,13 @@ answered without hedging", so a buff that garbles the question into something
 the model answers off-target manufactures a finding out of nothing. That is the
 one failure mode this project refuses to ship, so buffs skip those vectors and
 say how many they skipped.
+
+Adaptive escalation (`--escalate`):
+Progressively increases adversarial depth on held vectors through an ordered
+ladder. The progressive perturbation concept is inspired by multi-turn red-team
+converters (e.g. PyRIT's converter ladders and Garak's probe chains), but
+implemented here as pure, deterministic, stateless transforms without an LLM
+judge in the loop.
 """
 
 from __future__ import annotations
@@ -118,10 +125,72 @@ BUFFS = {
     "manyshot": buff_manyshot,
 }
 
+# The escalation ladder in ascending order of bypass pressure.
+# Progression: syntax encoding -> ciphers -> character noise -> affirmative
+# forcing -> in-context compliance -> invisible steganography.
+ESCALATION_LADDER = ["base64", "rot13", "leet", "prefix", "manyshot", "tags"]
+
 # `absent` reports the absence of a hedge, so a buff that makes the question
 # harder to parse produces a finding without a bypass. Excluded rather than
 # capped: there is no severity at which a manufactured finding is acceptable.
 UNBUFFABLE = {"absent"}
+
+
+def apply_one(name: str, text: str) -> str | None:
+    """Apply a single transformation to text by name.
+
+    Returns None if the buff cannot faithfully represent the text (e.g.
+    `tags` on non-ASCII characters).
+    """
+    fn = BUFFS.get(name)
+    if not fn:
+        raise ValueError(f"unknown buff: {name}. Available: {', '.join(sorted(BUFFS))}")
+    return fn(text)
+
+
+def apply_to_vector(v: Vector, name: str, update_id: bool = True) -> Vector | None:
+    """Apply a single buff to a Vector.
+
+    Returns None if the vector uses an unbuffable detector (like `absent`)
+    or if the payload cannot be carried by the buff.
+    Multi-turn vectors are buffed on the final turn only.
+    """
+    if v.detect in UNBUFFABLE:
+        return None
+    target = v.turns[-1] if v.turns else v.prompt
+    buffed = apply_one(name, target)
+    if buffed is None:
+        return None
+    source = f"{v.source} + {name} buff" if v.source else f"{name} buff"
+    vid = f"{v.id}+{name}" if update_id else v.id
+    if v.turns:
+        return dataclasses.replace(
+            v, id=vid, source=source,
+            turns=list(v.turns[:-1]) + [buffed], prompt="")
+    return dataclasses.replace(
+        v, id=vid, source=source,
+        prompt=buffed, turns=[])
+
+
+def count_extra_requests(vectors: list[Vector], levels: int) -> int:
+    """Calculate the maximum additional requests --escalate could generate.
+
+    Deterministic ceiling: counts only vectors that can escalate (excluding
+    unbuffable detectors like `absent` and payloads the buff cannot carry).
+    """
+    if levels <= 0:
+        return 0
+    ladder = ESCALATION_LADDER[:levels]
+    extra = 0
+    for v in vectors:
+        if v.detect in UNBUFFABLE:
+            continue
+        target = v.turns[-1] if v.turns else v.prompt
+        turns = len(v.messages)
+        for name in ladder:
+            if apply_one(name, target) is not None:
+                extra += turns
+    return extra
 
 
 def apply(vectors: list[Vector], names: list[str]) -> tuple[list[Vector], dict]:
@@ -150,21 +219,10 @@ def apply(vectors: list[Vector], names: list[str]) -> tuple[list[Vector], dict]:
             skipped["absent detector"] += len(names)
             continue
         for name in names:
-            fn = BUFFS[name]
-            target = v.turns[-1] if v.turns else v.prompt
-            buffed = fn(target)
-            if buffed is None:
+            transformed = apply_to_vector(v, name, update_id=True)
+            if transformed is None:
                 skipped["payload the buff cannot carry"] += 1
                 continue
-            # The vector is no longer purely the technique it cites, so say so
-            # rather than let a buffed copy claim the original's provenance.
-            source = f"{v.source} + {name} buff" if v.source else ""
-            if v.turns:
-                out.append(dataclasses.replace(
-                    v, id=f"{v.id}+{name}", source=source,
-                    turns=list(v.turns[:-1]) + [buffed], prompt=""))
-            else:
-                out.append(dataclasses.replace(
-                    v, id=f"{v.id}+{name}", source=source,
-                    prompt=buffed, turns=[]))
+            out.append(transformed)
     return out, {k: n for k, n in skipped.items() if n}
+

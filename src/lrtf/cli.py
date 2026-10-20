@@ -83,7 +83,7 @@ RISK_COLOR = {"CRITICAL": "bold white on red", "HIGH": "bold red",
               "INCOMPLETE": "bold yellow"}
 
 
-def _dry_run(model, vectors, repeat, rpm, workers, system, resumed: int) -> None:
+def _dry_run(model, vectors, repeat, rpm, workers, system, resumed: int, escalate: int = 0) -> None:
     """What the run would cost, without spending it.
 
     The request count is not the vector count -- multi-turn vectors bill per
@@ -94,20 +94,37 @@ def _dry_run(model, vectors, repeat, rpm, workers, system, resumed: int) -> None
     cats = sorted({v.category for v in vectors})
     sev = {s: sum(v.severity == s for v in vectors) for s in ("high", "medium", "low")}
 
+    if escalate:
+        from . import buffs as buffs_mod
+        extra = buffs_mod.count_extra_requests(vectors, escalate) * repeat
+        max_requests = requests + extra
+        req_str = f"{requests}–{max_requests} (adaptive, up to {escalate} levels)"
+        if repeat > 1:
+            req_str += f"  ({repeat}x)"
+    else:
+        req_str = f"{requests}" + (f"  ({repeat}x)" if repeat > 1 else "")
+
     rows = [
         ("model", model),
         ("system", str(system) if system else "default (canary planted)"),
         ("vectors", f"{len(vectors)}  ({sev['high']}H {sev['medium']}M {sev['low']}L)"
                     + (f", {resumed} already done" if resumed else "")),
-        ("requests", f"{requests}" + (f"  ({repeat}x)" if repeat > 1 else "")),
+        ("requests", req_str),
         ("categories", f"{len(cats)}  " + ", ".join(cats)),
     ]
+    if escalate:
+        from . import buffs as buffs_mod
+        ladder_names = ", ".join(buffs_mod.ESCALATION_LADDER[:escalate])
+        rows.insert(3, ("escalate", f"up to {escalate} levels ({ladder_names})"))
+
+    effective_reqs = (requests + buffs_mod.count_extra_requests(vectors, escalate) * repeat) if escalate else requests
     if rpm:
         # The throttle paces globally, so rpm is the binding constraint and the
         # estimate is a floor: it ignores latency past the gap and any retry.
-        mins = requests / rpm
+        mins = effective_reqs / rpm
         eta = f"{mins:.0f} min" if mins >= 1 else f"{mins * 60:.0f}s"
-        rows.append(("pacing", f"--rpm {rpm} --workers {workers}  →  ~{eta}"))
+        suffix = " max" if escalate else ""
+        rows.append(("pacing", f"--rpm {rpm} --workers {workers}  →  ~{eta}{suffix}"))
     else:
         rows.append(("pacing", f"--workers {workers}, unthrottled"))
 
@@ -134,6 +151,8 @@ def scan(
         None, "--vectors", help="Load vectors from these directories instead of the built-in suite (repeatable)."),
     buff: Optional[list[str]] = typer.Option(
         None, "--buff", help="Rewrite every selected vector through this transformation (repeatable). One buff multiplies the whole suite.", autocompletion=_complete_buff),
+    escalate: int = typer.Option(
+        0, "--escalate", "-e", help="Retry held vectors through up to N progressive transformations. Stops at the first level that leaks."),
     repeat: int = typer.Option(
         1, "--repeat", "-n", help="Run each vector N times. Guardrails are probabilistic; findings report hits/runs."),
     workers: int = typer.Option(4, "--workers", "-w", help="Parallel requests."),
@@ -173,6 +192,16 @@ def scan(
                                       ids=ids, exclude=exclude)
     except ValueError as exc:
         console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2)
+    if escalate < 0:
+        console.print("[red]--escalate must be >= 0[/]")
+        raise typer.Exit(2)
+    if escalate > len(buffs_mod.ESCALATION_LADDER):
+        console.print(f"[red]--escalate maximum is {len(buffs_mod.ESCALATION_LADDER)} "
+                      f"(ladder has: {', '.join(buffs_mod.ESCALATION_LADDER)})[/]")
+        raise typer.Exit(2)
+    if buff and escalate:
+        console.print("[red]Cannot combine --buff and --escalate. Use --buff for fixed transforms or --escalate for adaptive depth.[/]")
         raise typer.Exit(2)
     if buff:
         try:
@@ -216,7 +245,11 @@ def scan(
             raise typer.Exit(2)
 
     requests = sum(len(v.messages) for v in vectors) * repeat
-    extra = f" · {requests} requests" if requests != len(vectors) else ""
+    if escalate:
+        extra_max = buffs_mod.count_extra_requests(vectors, escalate) * repeat
+        extra = f" · {requests}–{requests + extra_max} requests"
+    else:
+        extra = f" · {requests} requests" if requests != len(vectors) else ""
     extra += f" · {repeat}x each" if repeat > 1 else ""
     if not quiet and not dry_run:   # the dry-run panel supersedes it
         console.print(Panel(f"[bold]{model}[/]\n{len(vectors)} vectors · "
@@ -225,7 +258,8 @@ def scan(
 
     pacing: dict = {}
     kw = dict(system=custom, workers=workers, rpm=rpm, repeat=repeat, pacing=pacing,
-              temperature=temperature, fail_fast=fail_fast, canary=canary)
+              temperature=temperature, fail_fast=fail_fast, canary=canary,
+              escalate=escalate)
     if max_tokens:
         kw["max_tokens"] = max_tokens
     if timeout:
@@ -246,7 +280,7 @@ def scan(
         # Sited after every option is parsed and validated, so a bad --header or
         # an unusable --system file still fails here rather than only on the run
         # that spends the quota.
-        _dry_run(model, vectors, repeat, rpm, workers, system, len(resumed))
+        _dry_run(model, vectors, repeat, rpm, workers, system, len(resumed), escalate=escalate)
         raise typer.Exit(0)
 
     if quiet:
@@ -412,6 +446,7 @@ def compare(
     severity: Optional[list[str]] = typer.Option(None, "--severity", "-s"),
     system: Optional[pathlib.Path] = typer.Option(None, "--system", help="Your own system prompt. Must contain {canary}."),
     vectors_dir: Optional[list[pathlib.Path]] = typer.Option(None, "--vectors"),
+    escalate: int = typer.Option(0, "--escalate", "-e", help="Retry held vectors through up to N progressive transformations."),
     repeat: int = typer.Option(1, "--repeat", "-n"),
     workers: int = typer.Option(4, "--workers", "-w"),
     rpm: int = typer.Option(0, "--rpm"),
@@ -446,7 +481,7 @@ def compare(
         extra = {"max_tokens": max_tokens} if max_tokens else {}
         results, canary = engine.run_scan(
             model, vectors, system=custom, workers=workers, rpm=rpm,
-            repeat=repeat, temperature=temperature, **extra)
+            repeat=repeat, temperature=temperature, escalate=escalate, **extra)
         reports[model] = engine.summarise(results, model, canary,
                                           requested=len(vectors))
 
@@ -726,9 +761,12 @@ def _render(report: dict, show_responses: bool) -> None:
             table.add_column(col, overflow="fold")
         for f in findings:
             v = f["vector"]
+            vid = v["id"]
+            if f.get("esc_buff"):
+                vid = f"{vid}+{f['esc_buff']}"
             turns = len(v.get("turns") or []) or 1
             where = f"{f['turn']}/{turns}" if turns > 1 else "—"
-            row = [v["id"], f"[{SEV_COLOR.get(v['severity'],'white')}]{v['severity'].upper()}[/]",
+            row = [vid, f"[{SEV_COLOR.get(v['severity'],'white')}]{v['severity'].upper()}[/]",
                    v["category"], v["title"], where]
             if repeated:
                 hits, runs = f.get("hits", 1), f.get("runs", 1)
@@ -755,6 +793,10 @@ def _render(report: dict, show_responses: bool) -> None:
     console.print(summary)
 
     s = report["by_severity"]
+    esc_counts = report.get("escalations", {})
+    total_esc = sum(esc_counts.values()) if esc_counts else 0
+    esc_note = (f"\n[cyan]{total_esc} finding{'s' if total_esc != 1 else ''} required escalation.[/]"
+                if total_esc else "")
     console.print(Panel(
         f"[{RISK_COLOR.get(report['risk'],'white')}] {report['risk']} [/]   "
         f"{report['vulnerable']}/{report['total']} vectors succeeded"
@@ -768,7 +810,8 @@ def _render(report: dict, show_responses: bool) -> None:
         + (f"\n[yellow]{report['blank']} vectors returned an empty response — not counted as held.[/]"
            if report.get("blank") else "")
         + (f"\n[yellow]stopped early: {report['skipped']} vectors were never run.[/]"
-           if report.get("skipped") else ""),
+           if report.get("skipped") else "")
+        + esc_note,
         border_style=RISK_COLOR.get(report["risk"], "white").split()[-1],
         title="Risk"))
 

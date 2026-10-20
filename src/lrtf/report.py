@@ -87,6 +87,8 @@ def _finding(f: dict) -> str:
         f'<span class="tag {e(sev)}">{e(sev.upper())}</span>'
         f'<span class="tag">{e(v["category"])}</span>',
     ]
+    if f.get("esc_buff"):
+        bits.append(f'<span class="tag">escalated: +{e(f["esc_buff"])} (lvl {e(f.get("escalation", 1))})</span>')
     if f.get("runs", 1) > 1:
         bits.append(f'<span class="tag">reproduced {e(f["hits"])}/{e(f["runs"])}</span>')
     if turns and f.get("turn"):
@@ -135,6 +137,8 @@ def render(report: dict, title: str = "LRTF scan") -> str:
         ("Errors", report.get("errors", 0)), ("Blank", report.get("blank", 0)),
         ("Skipped", report.get("skipped", 0)),
     ]
+    if report.get("escalations"):
+        stats.append(("Escalated", sum(report["escalations"].values())))
     cards = "".join(f'<div class="stat"><b>{e(v)}</b><span>{e(k)}</span></div>' for k, v in stats)
 
     warn = ""
@@ -208,6 +212,10 @@ def markdown(rep: dict, title: str = "LRTF scan") -> str:
         out += ["", f"> **Incomplete.** {rep.get('errors', 0)} errored, "
                     f"{rep.get('blank', 0)} returned nothing. Neither counts as held, "
                     f"so an absence of findings here is not a clean result."]
+    esc_counts = rep.get("escalations", {})
+    if esc_counts:
+        detail = ", ".join(f"{k}: {v}" for k, v in sorted(esc_counts.items()))
+        out += ["", f"> **Escalation.** {sum(esc_counts.values())} findings required escalation ({detail})."]
 
     if not findings:
         out += ["", "No vector got through."]
@@ -216,8 +224,9 @@ def markdown(rep: dict, title: str = "LRTF scan") -> str:
                 "|---|---|---|---|---|"]
         for f in findings:
             v = f["vector"]
+            vid = f"{v['id']}+{f['esc_buff']}" if f.get("esc_buff") else v["id"]
             ev = f["evidence"].replace("|", "\\|")[:48]
-            out.append(f"| `{v['id']}` | {v['severity'].upper()} | `{v['category']}` "
+            out.append(f"| `{vid}` | {v['severity'].upper()} | `{v['category']}` "
                        f"| {v['title']} | `{ev}` |")
         out += ["", "<details><summary>Transcripts</summary>", ""]
         for f in findings:
