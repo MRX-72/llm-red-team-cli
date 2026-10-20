@@ -905,7 +905,9 @@ Each entry in `findings` carries the whole vector definition plus:
 | `evidence` | The exact matched string. This is the quotable proof. |
 | `replies` | Every reply in the conversation, for multi-turn vectors. |
 | `turn` | 1-based turn that leaked; `0` if none. |
-| `runs` / `hits` | Attempts and leaks under `--repeat`. |
+| `runs` / `hits` | Attempts and leaks under `--repeat`. For an escalated finding, these count the level that leaked only. |
+| `escalation` / `esc_buff` | Under `--escalate`: the ladder level and buff that got through. `0` and `""` for a vanilla leak. |
+| `esc_runs` | Attempts spent on the other ladder levels. Billed and counted in `requests`, but not in `hits/runs`. |
 | `error` | Provider or network failure, if any. |
 
 Reports contain **every reply, pass or fail** — not just findings. That is what
