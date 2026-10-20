@@ -545,6 +545,7 @@ Every rule corresponds to a bug that actually shipped in this project.
 | `E011` | error | Duplicate vector id. |
 | `E012` | error | Blank entry in `match` or `reject_if` — **a silent kill switch**. |
 | `E013` | error | Unpaired surrogate in a prompt. Write astral characters as `\U0001XXXX`, not a `\udXXX` pair. |
+| `E014` | error | A `media` vector's final turn has characters the image/audio channel cannot render; they would arrive as `?`. |
 
 Custom detectors from `lrtf_detectors.py` are checked by every rule here,
 including the false-positive corpus — a plugin that fires on a refusal is an

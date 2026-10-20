@@ -14,6 +14,9 @@ Every rule here exists because the corresponding bug actually shipped:
         the vector fires on everything, in reject_if it can never report
   E013  emoji written as YAML surrogate pairs stayed unpaired surrogates, so
         the prompt could not be .encode()d and every buff raised on it
+  E014  a media vector whose payload the channel has no glyph for: the
+        missing characters render as '?', the image asks nothing, and the
+        vector scores as held
   W002  a payload that appears in a correctly-defended answer needs reject_if,
         or the vector flags a model for escaping properly
 
@@ -28,6 +31,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from . import multimodal
 from .engine import (DETECTORS, NEEDS_MATCH, SEVERITY_ORDER, Vector, _flat,
                      evaluate, new_canary)
 
@@ -157,6 +161,13 @@ def _shape_issues(v: Vector) -> list[Issue]:
         out.append(Issue("error", "E013", v.id,
                          "prompt contains an unpaired surrogate — write astral "
                          "characters as \\U0001XXXX, not a \\udXXX pair"))
+    if v.media:
+        # Media carries the final turn; the build-up stays plain text.
+        lost = sorted({c for c in v.messages[-1] if not multimodal.representable(c)})
+        if lost:
+            out.append(Issue("error", "E014", v.id,
+                             f"{v.media} channel has no glyph for {''.join(lost)!r} — "
+                             f"those characters would render as '?'"))
     if v.severity not in SEVERITY_ORDER:
         out.append(Issue("error", "E009", v.id, f"unknown severity {v.severity!r}"))
     if v.detect in NEEDS_MATCH and not v.match:
