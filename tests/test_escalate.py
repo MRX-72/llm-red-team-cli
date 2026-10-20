@@ -261,3 +261,11 @@ def test_report_rendering_with_escalation():
     assert "`t-1+base64`" in md_out
     assert "**Escalation.**" in md_out
     assert "base64: 1" in md_out
+
+
+def test_compare_validates_escalate_like_scan():
+    """compare used to accept --escalate 99 and silently run the six-level
+    ladder, and only scan rejected a negative value."""
+    r = runner.invoke(app, ["compare", "a", "b", "--escalate", "99"])
+    assert r.exit_code == 2
+    assert "--escalate maximum is" in flat(r.output)

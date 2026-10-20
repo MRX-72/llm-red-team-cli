@@ -83,6 +83,16 @@ RISK_COLOR = {"CRITICAL": "bold white on red", "HIGH": "bold red",
               "INCOMPLETE": "bold yellow"}
 
 
+def _check_escalate(escalate: int) -> None:
+    if escalate < 0:
+        console.print("[red]--escalate must be >= 0[/]")
+        raise typer.Exit(2)
+    if escalate > len(buffs_mod.ESCALATION_LADDER):
+        console.print(f"[red]--escalate maximum is {len(buffs_mod.ESCALATION_LADDER)} "
+                      f"(ladder has: {', '.join(buffs_mod.ESCALATION_LADDER)})[/]")
+        raise typer.Exit(2)
+
+
 def _dry_run(model, vectors, repeat, rpm, workers, system, resumed: int, escalate: int = 0) -> None:
     """What the run would cost, without spending it.
 
@@ -192,13 +202,7 @@ def scan(
     except ValueError as exc:
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(2)
-    if escalate < 0:
-        console.print("[red]--escalate must be >= 0[/]")
-        raise typer.Exit(2)
-    if escalate > len(buffs_mod.ESCALATION_LADDER):
-        console.print(f"[red]--escalate maximum is {len(buffs_mod.ESCALATION_LADDER)} "
-                      f"(ladder has: {', '.join(buffs_mod.ESCALATION_LADDER)})[/]")
-        raise typer.Exit(2)
+    _check_escalate(escalate)
     if buff and escalate:
         console.print("[red]Cannot combine --buff and --escalate. Use --buff for fixed transforms or --escalate for adaptive depth.[/]")
         raise typer.Exit(2)
@@ -462,6 +466,7 @@ def compare(
     if len(models) < 2:
         console.print("[red]compare needs at least two models.[/]")
         raise typer.Exit(2)
+    _check_escalate(escalate)
 
     source = [str(d) for d in vectors_dir] if vectors_dir else engine.VECTOR_DIR
     try:
