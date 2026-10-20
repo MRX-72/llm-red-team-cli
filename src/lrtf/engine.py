@@ -33,7 +33,7 @@ from typing import Any, Iterable
 
 import yaml
 
-from . import multimodal
+from . import __version__, multimodal
 
 VECTOR_DIR = os.path.join(os.path.dirname(__file__), "vectors")
 
@@ -936,6 +936,9 @@ def summarise(results: list[Result], model: str, canary: str,
     risk = risk_level(counts, incomplete=bool(errors or blank))
     return {
         "model": model,
+        # Detectors change between releases; `lrtf verify` re-scores an old
+        # report, and this says which detectors judged it in the first place.
+        "lrtf_version": __version__,
         "scanned_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "canary": canary,
         "total": len(results),

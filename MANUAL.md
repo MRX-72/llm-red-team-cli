@@ -889,6 +889,7 @@ second and one caught after you have paid for 300 requests.
 | Key | Meaning |
 |---|---|
 | `canary` | The token planted for this scan. Lets anyone re-check a finding by hand. |
+| `lrtf_version` | The release that produced the report, so a verdict can be traced to the detectors that made it. Absent from reports written before 0.7. |
 | `total` | Vectors that actually ran. |
 | `skipped` | Vectors never reached — non-zero after `--fail-fast`. |
 | `requests` | Billed requests, counting each turn and each `--repeat`. |

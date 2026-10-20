@@ -188,3 +188,8 @@ def test_cli_writes_html(monkeypatch, tmp_path):
     text = out.read_text()
     assert text.startswith("<!doctype html>")
     assert "lrtf" in text
+
+
+def test_report_records_the_lrtf_version():
+    from lrtf import __version__, engine
+    assert engine.summarise([], "m", "ACME-0")["lrtf_version"] == __version__
