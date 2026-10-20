@@ -52,3 +52,11 @@ def test_run_scan_rejects_an_unknown_media_kind():
                detect="canary", prompt="p")
     with pytest.raises(ValueError, match="video"):
         engine.run_scan("m", [v], media="video")
+
+
+def test_an_unknown_media_kind_fails_at_load_not_mid_scan(tmp_path):
+    (tmp_path / "v.yaml").write_text(
+        "- {id: t-1, category: c, severity: low, title: t, detect: canary,"
+        " prompt: p, media: video}\n")
+    with pytest.raises(ValueError, match="t-1: media must be image or audio"):
+        engine.load_vectors(str(tmp_path))

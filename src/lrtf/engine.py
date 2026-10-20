@@ -212,6 +212,8 @@ NEEDS_MATCH = {"contains", "regex", "absent", "repetition"}
 
 DETECTOR_MODULE = "lrtf_detectors.py"
 
+MEDIA_KINDS = ("", "image", "audio")
+
 
 def load_detectors(paths: Iterable[str]) -> list[str]:
     """Register detectors from `lrtf_detectors.py` in each vector directory.
@@ -319,6 +321,10 @@ def load_vectors(
                                  f"pattern string, not {type(v.match).__name__}")
             if bool(v.prompt) == bool(v.turns):
                 raise ValueError(f"{v.id}: needs exactly one of prompt or turns")
+            if v.media not in MEDIA_KINDS:
+                # Caught here rather than mid-scan, after the quota is spent.
+                raise ValueError(f"{v.id}: media must be image or audio, "
+                                 f"not {v.media!r}")
             seen.add(v.id)
             vectors.append(v)
     if categories:
@@ -751,7 +757,7 @@ def run_scan(
     escalate: int = 0,
     **kw,
 ) -> tuple[list[Result], str]:
-    if media not in ("", "image", "audio"):
+    if media not in MEDIA_KINDS:
         raise ValueError(f"{media!r} is not a media kind (use '', 'image' or 'audio')")
     canary = canary or new_canary()
     # replace, not .format(): a real system prompt carries braces of its own
