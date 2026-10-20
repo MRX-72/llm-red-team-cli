@@ -797,6 +797,15 @@ def run_scan(
     def one(v: Vector) -> Result | None:
         """Run the vector `repeat` times and fold the attempts into one result.
 
+        Returns None once fail_fast has tripped. Cancelling queued futures is not
+        enough on its own: a worker can drain the queue before the main thread
+        gets scheduled to cancel anything, so the stop flag is checked here,
+        before any request is paid for.
+
+        Guardrails are probabilistic: a framing that is refused once may land on
+        the next try. A single pass is an observation, not a rate. Any leak makes
+        the vector a finding, and `hits/runs` records how reliably it reproduces.
+
         If escalate > 0 and the vector holds at vanilla, walk through the
         escalation ladder until a transformation breaches the guardrail or the
         ladder is exhausted.
