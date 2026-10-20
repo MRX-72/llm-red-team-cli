@@ -778,6 +778,14 @@ Both are the same rule: a prompt that cannot possibly work would still get a
 reply, and that reply would score as **held**. A silent false pass is the one
 result this tool refuses to produce.
 
+Every other detector reads the *response*, so rewriting the prompt cannot change
+what counts as evidence — the canary either came back or it did not. A buffed
+vector's `source` records the composition, so a buffed copy never claims the
+original technique's provenance.
+
+Multi-turn vectors are buffed on the **final** turn only. The earlier turns are
+the attack building up; rewriting them destroys the thing being tested.
+
 ### Adaptive escalation
 
 While `--buff` applies transformations across all vectors upfront, `--escalate N`
@@ -803,14 +811,6 @@ The escalation ladder advances in order of bypass pressure:
 - **Deterministic:** Pure seeded transformations without LLM judges in the loop.
 - **Adaptive request cost:** A model failing at vanilla stops immediately without extra calls; resilient vectors are tested deeper. `--dry-run` displays the exact request ceiling.
 - **Breaking markers:** Findings report the exact level and buff that broke through (e.g. `+base64`, `+rot13`).
-
-Every other detector reads the *response*, so rewriting the prompt cannot change
-what counts as evidence — the canary either came back or it did not. A buffed
-vector's `source` records the composition, so a buffed copy never claims the
-original technique's provenance.
-
-Multi-turn vectors are buffed on the **final** turn only. The earlier turns are
-the attack building up; rewriting them destroys the thing being tested.
 
 ### Your own detectors
 
