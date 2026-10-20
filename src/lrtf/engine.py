@@ -192,6 +192,7 @@ class Result:
     hits: int = 1          # how many of those leaked
     escalation: int = 0    # 0 = vanilla, 1..N = buff level that leaked
     esc_buff: str = ""     # the buff name, for rendering
+    esc_runs: int = 0      # attempts on other ladder levels: billed, not in hits/runs
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -376,6 +377,7 @@ def result_from_dict(d: dict) -> Result:
         runs=d.get("runs", 1), hits=d.get("hits", 1),
         escalation=d.get("escalation", 0),
         esc_buff=d.get("esc_buff", ""),
+        esc_runs=d.get("esc_runs", 0),
     )
 
 
@@ -717,17 +719,21 @@ def run_scan(
                 esc_leaked = [r for r in esc_attempts if r.vulnerable]
 
                 if esc_leaked:
-                    all_leaks = [r for r in all_attempts if r.vulnerable]
+                    # hits/runs describe the transform that leaked, not the
+                    # ladder: folding in the levels that held made a leak that
+                    # reproduces every time read as 1/2.
                     res = esc_leaked[0]
-                    res.runs = len(all_attempts)
-                    res.hits = len(all_leaks)
+                    res.runs = repeat
+                    res.hits = len(esc_leaked)
+                    res.esc_runs = len(all_attempts) - repeat
                     res.escalation = lvl_idx
                     res.esc_buff = buff_name
                     return res
 
         ran = [r for r in all_attempts if not r.error]
         result = ran[-1] if ran else all_attempts[0]
-        result.runs = len(all_attempts)
+        result.runs = repeat
+        result.esc_runs = len(all_attempts) - repeat
         result.hits = 0
         result.escalation = 0
         result.esc_buff = ""
@@ -806,7 +812,7 @@ def summarise(results: list[Result], model: str, canary: str,
         # indistinguishable from a complete one -- and `diff` would read every
         # skipped vector as having been removed from the suite.
         "skipped": max(0, (requested or len(results)) - len(results)),
-        "requests": sum(len(r.vector.messages) * r.runs for r in results),
+        "requests": sum(len(r.vector.messages) * (r.runs + r.esc_runs) for r in results),
         "vulnerable": sum(r.vulnerable for r in results),
         "errors": errors,
         "blank": blank,

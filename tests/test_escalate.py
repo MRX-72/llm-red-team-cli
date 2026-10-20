@@ -118,8 +118,8 @@ def test_multi_turn_final_turn_only():
 
 
 def test_repeat_hits_runs_folding(monkeypatch):
-    """When repeat > 1, attempts fold across levels. If vanilla holds 0/2 and level 1 leaks 1/2,
-    total runs = 4, total hits = 1, escalation = 1."""
+    """hits/runs describe the level that leaked: vanilla holds 0/2, base64 leaks
+    1/2, so the finding reads 1/2 -- and the 2 vanilla attempts are still billed."""
     v = one()
     canary = "ACME-FOLD"
     attempt_counter = [0]
@@ -149,10 +149,25 @@ def test_repeat_hits_runs_folding(monkeypatch):
     assert len(results) == 1
     r = results[0]
     assert r.vulnerable is True
-    assert r.runs == 4
+    assert r.runs == 2
     assert r.hits == 1
+    assert r.esc_runs == 2
     assert r.escalation == 1
     assert r.esc_buff == "base64"
+    assert engine.summarise(results, "test-model", canary)["requests"] == 4
+
+
+def test_deterministic_escalated_leak_reads_as_full_rate(monkeypatch):
+    """A transform that leaks on its only try is 1/1, not 1/2 -- otherwise the
+    hits/runs column switches on and calls a reliable bypass flaky."""
+    canary = "ACME-FULL"
+    monkeypatch.setattr(engine, "converse", lambda m, s, turns, **kw:
+                        [canary] if "base64" in turns[-1].lower() else ["No."])
+    results, _ = engine.run_scan("test-model", [one()], canary=canary,
+                                 escalate=3, workers=1)
+    r = results[0]
+    assert (r.hits, r.runs, r.esc_runs) == (1, 1, 1)
+    assert engine.summarise(results, "test-model", canary)["requests"] == 2
 
 
 def test_errored_vanilla_never_escalates(monkeypatch):
@@ -170,7 +185,7 @@ def test_errored_vanilla_never_escalates(monkeypatch):
     assert len(calls) == 1
     r = results[0]
     assert r.error and not r.vulnerable
-    assert (r.runs, r.escalation) == (1, 0)
+    assert (r.runs, r.esc_runs, r.escalation) == (1, 0, 0)
 
 
 def test_dry_run_count_exactness():
@@ -207,6 +222,7 @@ def test_resume_of_old_report_lacking_fields(tmp_path):
     r = engine.result_from_dict(old_data)
     assert r.escalation == 0
     assert r.esc_buff == ""
+    assert r.esc_runs == 0
     d = r.to_dict()
     assert d["escalation"] == 0
     assert d["esc_buff"] == ""
