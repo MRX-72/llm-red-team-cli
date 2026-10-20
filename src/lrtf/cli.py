@@ -566,7 +566,19 @@ def verify(
                 continue
             if f["error"] or not "".join(f.get("replies") or [f["response"]]).strip():
                 continue          # never tested; not ours to re-judge
-            evidence = engine.evaluate(f["response"], vecs[vid], rep["canary"])
+            # Every turn, as the scan judged it. Only the last reply is stored in
+            # `response` for a vector that held, so re-scoring that alone missed
+            # a multi-turn leak in an earlier turn.
+            replies = f.get("replies") or [f["response"]]
+            evidence, turn = "", 0
+            for i, reply in enumerate(replies, start=1):
+                evidence = engine.evaluate(reply, vecs[vid], rep["canary"])
+                if evidence:
+                    turn = i
+                    break
+            if evidence:
+                f["response"] = replies[turn - 1]
+            f["turn"] = turn if f.get("replies") else f.get("turn", 0)
             now = bool(evidence)
             if now and not f["vulnerable"]:
                 gained.append(vid)

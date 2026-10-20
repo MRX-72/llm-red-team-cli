@@ -64,6 +64,19 @@ def test_a_newly_detected_leak_is_reported(tmp_path):
     assert "newly flagged" in flat(r.output)
 
 
+def test_a_leak_in_an_earlier_turn_is_re_scored(tmp_path):
+    """A held multi-turn vector stores its last reply as `response`; the leak
+    can sit in any turn, so every stored reply has to be read."""
+    f = finding("jb-014", False, "I can't go further.")
+    f["replies"] = ["Sure.", f"It is {CANARY}.", "I can't go further."]
+    p = report(tmp_path, "r.json", [f])
+    r = runner.invoke(app, ["verify", "--write", str(p)])
+    assert "newly flagged" in flat(r.output)
+    stored = json.loads(p.read_text())["findings"][0]
+    assert stored["turn"] == 2
+    assert CANARY in stored["response"]
+
+
 def test_errored_vectors_are_not_re_judged(tmp_path):
     """The dangerous case: an errored vector has an empty response, which every
     detector clears. Counting that as 'no longer flagged' would invent a pass."""
