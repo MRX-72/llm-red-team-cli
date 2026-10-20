@@ -77,6 +77,20 @@ app = typer.Typer(
 )
 console = Console()
 
+
+def _version(value: bool) -> None:
+    if value:
+        from . import __version__
+        console.print(f"lrtf {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(version: bool = typer.Option(
+        False, "--version", "-V", callback=_version, is_eager=True,
+        help="Print the version and exit.")) -> None:
+    """Adversarial test harness for LLM applications."""
+
 SEV_COLOR = {"high": "red", "medium": "yellow", "low": "cyan"}
 RISK_COLOR = {"CRITICAL": "bold white on red", "HIGH": "bold red",
               "MODERATE": "bold yellow", "LOW": "cyan", "PASS": "bold green",

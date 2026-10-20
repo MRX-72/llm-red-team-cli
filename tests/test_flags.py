@@ -429,3 +429,11 @@ def test_bad_fail_on_is_rejected_before_any_request(monkeypatch):
     assert r.exit_code == 2
     assert "--fail-on must be one of" in flat(r.output)
     assert not sent
+
+
+def test_version_flag():
+    """A bug report is only useful with the version it was seen on."""
+    from lrtf import __version__
+    r = runner.invoke(app, ["--version"])
+    assert r.exit_code == 0
+    assert __version__ in r.output
