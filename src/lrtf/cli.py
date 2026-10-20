@@ -717,12 +717,21 @@ def diff(
 
     STYLE = {"REGRESSED": "bold red", "STILL FAILING": "yellow", "FIXED": "green",
              "ADDED": "red", "DROPPED": "dim", "UNTESTED": "yellow"}
+    def level(f):
+        return f"+{f['esc_buff']}" if f and f.get("esc_buff") else "vanilla"
+
     rows = []
     for vid in sorted(old | new):
         state = bucket(vid)
         if state:
             meta = (new.get(vid) or old[vid])["vector"]
-            rows.append((state, vid, meta["severity"], meta["category"], meta["title"]))
+            shown = vid
+            # Under --escalate, "still failing" hides the result that matters:
+            # a vector that now needs rot13 to leak where it used to leak plain
+            # is a partial fix, and the reverse is a regression in all but name.
+            if state == "STILL FAILING" and level(old[vid]) != level(new[vid]):
+                shown = f"{vid}  {level(old[vid])} → {level(new[vid])}"
+            rows.append((state, shown, meta["severity"], meta["category"], meta["title"]))
 
     header = Table.grid(padding=(0, 2))
     header.add_column(style="dim")

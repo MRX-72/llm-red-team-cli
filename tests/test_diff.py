@@ -99,3 +99,14 @@ def test_removed_vector_shows_as_dropped(tmp_path):
     b = report(tmp_path, "b.json", [finding("v1", True)])
     r = run(a, b)
     assert "DROPPED" in flat(r.output)
+
+
+def test_still_failing_names_a_change_in_escalation_level(tmp_path):
+    """Needing rot13 where it used to leak plain is progress; diff should say so
+    rather than file it under an unchanged "still failing"."""
+    was = finding("v1", True)
+    now = dict(finding("v1", True), escalation=2, esc_buff="rot13")
+    r = run(report(tmp_path, "a.json", [was]), report(tmp_path, "b.json", [now]))
+    out = flat(r.output)
+    assert "STILL FAILING" in out
+    assert "vanilla → +rot13" in out
