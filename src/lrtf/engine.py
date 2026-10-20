@@ -676,7 +676,8 @@ def user_content(prompt: str, media: str = "") -> str | list[dict]:
     raise ValueError(f"{media!r} is not a media kind (use '', 'image' or 'audio')")
 
 
-def probe(model: str, system: str, prompt: str, history: list[dict] | None = None,
+def probe(model: str, system: str, prompt: str | list[dict],
+          history: list[dict] | None = None,
           media: str = "", **kw) -> str:
     """One completion, optionally continuing a conversation.
 
@@ -725,8 +726,9 @@ def converse(model: str, system: str, turns: list[str], throttle=None,
         content = user_content(turn, media if last else "")
         if throttle:
             throttle.wait()
-        reply = probe(model, system, turn, history=list(history),
-                      media=media if last else "", **kw)
+        # Already rendered: user_content() passes a block list through, and
+        # rendering a PNG or WAV twice per turn bought nothing.
+        reply = probe(model, system, content, history=list(history), **kw)
         replies.append(reply)
         history += [{"role": "user", "content": content},
                     {"role": "assistant", "content": reply}]
