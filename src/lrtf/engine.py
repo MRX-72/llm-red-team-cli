@@ -699,7 +699,11 @@ def run_scan(
             res.esc_buff = ""
             return res
 
-        if ladder and v.detect not in ("absent",):
+        # Escalate only past a real answer. A vanilla attempt that errored never
+        # tested the guardrail, so escalating it reports a finding as "needed
+        # escalation" without evidence -- and a bad key or a refused request
+        # turns one doomed call per vector into one per ladder level.
+        if ladder and v.detect not in ("absent",) and any(not r.error for r in attempts):
             from . import buffs
             for lvl_idx, buff_name in enumerate(ladder, start=1):
                 if stop.is_set():

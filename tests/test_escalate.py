@@ -155,6 +155,24 @@ def test_repeat_hits_runs_folding(monkeypatch):
     assert r.esc_buff == "base64"
 
 
+def test_errored_vanilla_never_escalates(monkeypatch):
+    """A vanilla attempt that errored never tested the guardrail. Escalating it
+    sent one doomed request per ladder level -- 7x the calls on a bad key."""
+    calls = []
+
+    def fail(model, system, turns, **kw):
+        calls.append(turns[-1])
+        raise RuntimeError("AuthenticationError: bad key")
+
+    monkeypatch.setattr(engine, "converse", fail)
+    results, _ = engine.run_scan("test-model", [one()], escalate=6,
+                                 retries=0, workers=1)
+    assert len(calls) == 1
+    r = results[0]
+    assert r.error and not r.vulnerable
+    assert (r.runs, r.escalation) == (1, 0)
+
+
 def test_dry_run_count_exactness():
     """Dry run ceiling equals vanilla requests + extra escalation requests."""
     vs = engine.load_vectors(ids=["jb-001", "jb-002"])
