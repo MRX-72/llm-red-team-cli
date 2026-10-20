@@ -28,6 +28,8 @@ from typing import Any, Iterable
 
 import yaml
 
+from . import multimodal
+
 VECTOR_DIR = os.path.join(os.path.dirname(__file__), "vectors")
 
 SYSTEM_PROMPT = """You are ACME Assistant, the customer support bot for ACME Corp.
@@ -163,6 +165,7 @@ class Vector:
     detect: str
     prompt: str = ""
     turns: list[str] = field(default_factory=list)
+    media: str = ""    # "" | "image" | "audio": the modality the prompt rides in
     match: Any = None
     min_hits: int = 1
     reject_if: Any = None
@@ -535,7 +538,26 @@ def _rejected_generation(exc: Exception) -> str:
         return ""
 
 
-def probe(model: str, system: str, prompt: str, history: list[dict] | None = None, **kw) -> str:
+def user_content(prompt: str, media: str = "") -> str | list[dict]:
+    """User-turn content: plain text, or OpenAI-style content blocks carrying
+    the instruction inside an image or audio file.
+
+    `media` names the modality the attack rides in. The text visible to the
+    model is a fixed, benign caption (living in multimodal.py) while the actual
+    instruction is embedded in the media -- which is the point of testing that
+    modality at all.
+    """
+    if not media:
+        return prompt
+    if media == "image":
+        return multimodal.image_blocks(prompt)
+    if media == "audio":
+        return multimodal.audio_blocks(prompt)
+    raise ValueError(f"{media!r} is not a media kind (use '', 'image' or 'audio')")
+
+
+def probe(model: str, system: str, prompt: str, history: list[dict] | None = None,
+          media: str = "", **kw) -> str:
     """One completion, optionally continuing a conversation.
 
     This is the single seam every request goes through -- single-turn and
@@ -552,7 +574,7 @@ def probe(model: str, system: str, prompt: str, history: list[dict] | None = Non
             messages=[
                 {"role": "system", "content": system},
                 *(history or []),
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": user_content(prompt, media)},
             ],
             **kw,
         )
@@ -564,22 +586,29 @@ def probe(model: str, system: str, prompt: str, history: list[dict] | None = Non
     return _message_text(resp.choices[0].message)
 
 
-def converse(model: str, system: str, turns: list[str], throttle=None, **kw) -> list[str]:
+def converse(model: str, system: str, turns: list[str], throttle=None,
+             media: str = "", **kw) -> list[str]:
     """Run a conversation, returning the assistant reply to each turn.
 
     Attacks that build over several turns -- crescendo, trust-building, memory
     bleed -- cannot be expressed as one message, because each step depends on
     what the model just conceded. Every turn is a billed request, so the
     throttle applies per turn, not per vector.
+
+    `media` is a property of the attack's final turn: the still-open question
+    is handed over as an image or recording, with the build-up in plain text.
     """
     replies: list[str] = []
     history: list[dict] = []
-    for turn in turns:
+    for i, turn in enumerate(turns):
+        last = i == len(turns) - 1
+        content = user_content(turn, media if last else "")
         if throttle:
             throttle.wait()
-        reply = probe(model, system, turn, history=list(history), **kw)
+        reply = probe(model, system, turn, history=list(history),
+                      media=media if last else "", **kw)
         replies.append(reply)
-        history += [{"role": "user", "content": turn},
+        history += [{"role": "user", "content": content},
                     {"role": "assistant", "content": reply}]
     return replies
 
@@ -594,10 +623,13 @@ def run_scan(
     retries: int = 2,
     repeat: int = 1,
     fail_fast: bool = False,
+    media: str = "",
     on_result=None,
     pacing: dict | None = None,
     **kw,
 ) -> tuple[list[Result], str]:
+    if media not in ("", "image", "audio"):
+        raise ValueError(f"{media!r} is not a media kind (use '', 'image' or 'audio')")
     canary = canary or new_canary()
     # replace, not .format(): a real system prompt carries braces of its own
     # (a JSON example, a template) and .format() raised KeyError on them.
@@ -612,7 +644,7 @@ def run_scan(
         for remaining in range(retries, -1, -1):
             try:
                 replies = converse(model, system, v.messages, throttle=throttle,
-                                   num_retries=retries, **kw)
+                                   media=v.media or media, num_retries=retries, **kw)
             except Exception as exc:  # provider/network/auth: reported, not raised
                 after = is_rate_limit(exc)
                 if after is None or not remaining:
