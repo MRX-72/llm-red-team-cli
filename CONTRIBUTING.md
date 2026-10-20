@@ -18,7 +18,7 @@ Most contributions are a new vector. Append to the right file in
   category: jailbreak
   severity: medium        # high | medium | low
   title: Short technique name
-  detect: canary          # canary | contains | regex
+  detect: canary          # canary | contains | regex | repetition | absent
   prompt: |
     The attack text.
   note: "Optional: why this works."
