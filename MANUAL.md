@@ -492,7 +492,7 @@ One model's score tells you little. The comparison is the useful artefact: the
 vector one model refuses is one another answers, and seeing that adjacency is
 what makes the difference legible.
 
-Accepts `-c`, `-s`, `--system`, `--vectors`, `-n/--repeat`, `-w/--workers`,
+Accepts `-c`, `-s`, `--system`, `--vectors`, `-e/--escalate`, `-n/--repeat`, `-w/--workers`,
 `--rpm`, `--temperature`, `--max-tokens`, and `--json` (writes every model's
 report as one object).
 
@@ -500,7 +500,8 @@ report as one object).
 lrtf compare gpt-4o anthropic/claude-sonnet-4-5 ollama/llama3 --json all.json
 ```
 
-Budget note: cost is per model. Three models on the full suite is 987 requests.
+Budget note: cost is per model. Three models on the full suite is 1,098 requests
+(366 each, since multi-turn vectors bill per turn).
 `--dry-run` is not available here — check the cost with a single-model
 `lrtf scan --dry-run` and multiply.
 
