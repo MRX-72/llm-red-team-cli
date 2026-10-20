@@ -118,7 +118,7 @@ Three consequences worth knowing:
 
 - **Deterministic.** A finding is a string match. It reproduces, and you can
   paste the evidence into a ticket.
-- **Cheap.** One API call per vector. A full 300-vector scan of a flash-class model costs
+- **Cheap.** One API call per vector. A full 330-vector scan of a flash-class model costs
   well under a dollar.
 - **The payloads stay benign.** Vectors test whether a rule *can be bypassed*,
   not whether the model will produce something harmful. The forbidden thing is a
@@ -969,7 +969,7 @@ Contributions should follow the same rule as the existing set: probe the
 
 This tests a model behind a system prompt — the layer an application developer
 controls. It does not test infrastructure (rate limits, auth, tool sandboxing),
-and a `PASS` means these 38 vectors failed, not that the deployment is secure.
+and a `PASS` means the vectors you ran failed, not that the deployment is secure.
 
 Only scan models you own or have permission to test.
 
